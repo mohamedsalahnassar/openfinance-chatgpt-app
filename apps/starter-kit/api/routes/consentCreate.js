@@ -417,7 +417,7 @@ router.post('/variable-on-demand-payments', async (req, res) => {
 
 router.post('/bank-data', async (req, res) => {
 
-    const { data_permissions } = req.body;
+    const { data_permissions, valid_from, valid_until } = req.body;
 
     const allowedPermissions = [
         'ReadAccountsBasic',
@@ -446,7 +446,33 @@ router.post('/bank-data', async (req, res) => {
         !data_permissions.every(permission => allowedPermissions.includes(permission))
     ) {
         return res.status(400).json({
-            description: 'Inalid data_permissions'
+            description: 'Invalid data_permissions'
+        });
+    }
+
+    const parseIsoOrUndefined = (value) => {
+        if (!value) {
+            return undefined;
+        }
+        const parsed = new Date(value);
+        if (Number.isNaN(parsed.getTime())) {
+            return null;
+        }
+        return parsed.toISOString();
+    };
+
+    const parsedValidFrom = parseIsoOrUndefined(valid_from);
+    const parsedValidUntil = parseIsoOrUndefined(valid_until);
+
+    if (parsedValidFrom === null || parsedValidUntil === null) {
+        return res.status(400).json({
+            description: 'valid_from and valid_until must be valid ISO date strings',
+        });
+    }
+
+    if (parsedValidFrom && parsedValidUntil && parsedValidFrom >= parsedValidUntil) {
+        return res.status(400).json({
+            description: 'valid_until must be later than valid_from',
         });
     }
 
@@ -456,7 +482,7 @@ router.post('/bank-data', async (req, res) => {
         {
             type: 'urn:openfinanceuae:account-access-consent:v1.2',
             consent: {
-                ExpirationDateTime: '2025-12-25T00:00:00.000Z',
+                ExpirationDateTime: parsedValidUntil ?? '2025-12-25T00:00:00.000Z',
                 // "OnBehalfOf": {
                 //     "TradingName": "Ozone",
                 //     "LegalName": "Ozone-CBUAE",
@@ -466,8 +492,8 @@ router.post('/bank-data', async (req, res) => {
                 ConsentId: consentId,
                 "BaseConsentId": "b265ab23-017e-4d86-98d2-bff578e0de08",
                 Permissions: data_permissions,
-                //  "TransactionFromDateTime": "2023-10-23T23:00:00.000Z",
-                //  "TransactionToDateTime": "2023-12-30T23:00:00.000Z",
+                ...(parsedValidFrom && { TransactionFromDateTime: parsedValidFrom }),
+                ...(parsedValidUntil && { TransactionToDateTime: parsedValidUntil }),
                 OpenFinanceBilling: {
                     UserType: 'Retail',
                     Purpose: 'AccountAggregation'

@@ -57,78 +57,13 @@ type WidgetDescriptor = {
   html: string;
 };
 
-function normalizeAssetReference(reference: string): string {
-  const withoutProtocol = reference.replace(/^https?:\/\/[^/]+/, "");
-  const [pathPart] = withoutProtocol.split("?");
-  const trimmed = pathPart.replace(/^\/+/, "");
-  const safe = path.normalize(trimmed).replace(/^(\.\.(\/|\\|$))+/, "");
-  return safe;
-}
-
-function resolveAssetFile(reference: string): string {
-  const relative = normalizeAssetReference(reference);
-  const absolute = path.join(widgetsDistDir, relative);
-  if (!absolute.startsWith(widgetsDistDir)) {
-    throw new Error(`Asset reference "${reference}" resolves outside widget dist.`);
-  }
-  if (!existsSync(absolute)) {
-    throw new Error(
-      `Widget asset "${reference}" not found under ${widgetsDistDir}.`
-    );
-  }
-  return absolute;
-}
-
-function rewriteCssAssetRefs(css: string, assetBase: string): string {
+function rewriteAssetPaths(html: string, assetBase: string): string {
   const normalized = assetBase.replace(/\/+$/, "");
-  return css.replace(
-    /url\((['"]?)(\/assets\/[^'")]+)\1\)/g,
-    (_match, quote = "", assetPath: string) =>
-      `url(${quote}${normalized}${assetPath}${quote})`
+  return html.replace(
+    /(href|src)=([`'"])(\/assets\/[^"'`]+)\2/gi,
+    (_match, attr, quote, assetPath) =>
+      `${attr}=${quote}${normalized}${assetPath}${quote}`
   );
-}
-
-function rewriteJsAssetRefs(js: string, assetBase: string): string {
-  const normalized = assetBase.replace(/\/+$/, "");
-  return js.replace(
-    /(["'`])\/assets\//g,
-    (_match, quote: string) => `${quote}${normalized}/assets/`
-  );
-}
-
-async function inlineWidgetHtml(
-  originalHtml: string,
-  assetBase: string
-): Promise<string> {
-  let html = originalHtml;
-
-  const cssMatch = html.match(
-    /<link[^>]+rel=["']stylesheet["'][^>]+href=["']([^"']+)["'][^>]*>/i
-  );
-  if (cssMatch) {
-    const cssPath = resolveAssetFile(cssMatch[1]);
-    let css = await readFile(cssPath, "utf8");
-    css = rewriteCssAssetRefs(css, assetBase);
-    html = html.replace(
-      cssMatch[0],
-      `<style data-inline="true">\n${css}\n</style>`
-    );
-  }
-
-  const scriptMatch = html.match(
-    /<script[^>]+src=["']([^"']+)["'][^>]*>\s*<\/script>/i
-  );
-  if (scriptMatch) {
-    const scriptPath = resolveAssetFile(scriptMatch[1]);
-    let js = await readFile(scriptPath, "utf8");
-    js = rewriteJsAssetRefs(js, assetBase);
-    html = html.replace(
-      scriptMatch[0],
-      `<script type="module">\n${js}\n</script>`
-    );
-  }
-
-  return html;
 }
 
 async function loadWidgetDescriptor(): Promise<WidgetDescriptor> {
@@ -139,7 +74,7 @@ async function loadWidgetDescriptor(): Promise<WidgetDescriptor> {
     );
   }
   const rawHtml = await readFile(htmlPath, "utf8");
-  const html = await inlineWidgetHtml(rawHtml, widgetBaseUrl);
+  const html = rewriteAssetPaths(rawHtml, widgetBaseUrl);
   return {
     id: "openfinance-consent-flow",
     title: "Consent + balance orchestrator",
@@ -198,6 +133,28 @@ const scopeOptions = [
   "openid products",
 ];
 
+const dataPermissionOptions = [
+  "ReadAccountsBasic",
+  "ReadAccountsDetail",
+  "ReadBalances",
+  "ReadBeneficiariesBasic",
+  "ReadBeneficiariesDetail",
+  "ReadTransactionsBasic",
+  "ReadTransactionsDetail",
+  "ReadTransactionsCredits",
+  "ReadTransactionsDebits",
+  "ReadScheduledPaymentsBasic",
+  "ReadScheduledPaymentsDetail",
+  "ReadDirectDebits",
+  "ReadStandingOrdersBasic",
+  "ReadStandingOrdersDetail",
+  "ReadConsents",
+  "ReadPartyUser",
+  "ReadPartyUserIdentity",
+  "ReadParty",
+] as const;
+const dataPermissionEnum = z.enum(dataPermissionOptions);
+
 const registerSchema = z.object({});
 const clientCredentialsSchema = z.object({
   scope: z
@@ -216,6 +173,23 @@ const consentSchema = z.object({
     .regex(/^(?:0|[1-9]\d*)(?:\.\d{2})$/, "Use a value like 250.00")
     .default("250.00"),
 });
+
+const dataConsentSchema = z
+  .object({
+    permissions: z.array(dataPermissionEnum).nonempty("Select at least one permission"),
+    validFrom: z.string().datetime().optional(),
+    validUntil: z.string().datetime().optional(),
+  })
+  .refine(
+    (value) =>
+      !value.validFrom ||
+      !value.validUntil ||
+      new Date(value.validFrom) < new Date(value.validUntil),
+    {
+      message: "validUntil must be later than validFrom",
+      path: ["validUntil"],
+    }
+  );
 
 const exchangeSchema = z.object({
   code: z.string().min(1, "code is required"),
@@ -353,6 +327,48 @@ const tools: Tool[] = [
       );
       return asToolResult(
         "Consent created. Redirect URL and verifier returned.",
+        payload
+      );
+    },
+  }),
+  registerTool({
+    spec: {
+      name: "openfinance.createDataConsent",
+      title: "Create data sharing consent",
+      description:
+        "Build an account-access consent for data aggregation with a custom validity period.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          permissions: {
+            type: "array",
+            description: "List of data permissions requested from the user.",
+            items: { type: "string", enum: dataPermissionOptions },
+          },
+          validFrom: {
+            type: "string",
+            description: "ISO 8601 timestamp when the consent becomes active.",
+          },
+          validUntil: {
+            type: "string",
+            description:
+              "ISO 8601 timestamp when the consent expires. Must be later than validFrom.",
+          },
+        },
+        required: ["permissions"],
+        additionalProperties: false,
+      },
+    },
+    schema: dataConsentSchema,
+    invoke: async (raw) => {
+      const args = dataConsentSchema.parse(raw);
+      const payload = await openFinanceClient.createDataConsent({
+        permissions: args.permissions,
+        validFrom: args.validFrom,
+        validUntil: args.validUntil,
+      });
+      return asToolResult(
+        "Data sharing consent created. Redirect URL ready for authorization.",
         payload
       );
     },
@@ -618,8 +634,25 @@ function contentTypeFor(filePath: string) {
   }
 }
 
+function resolveStaticPath(pathname: string): string | null {
+  if (pathname === "/widgets" || pathname === "/widgets/") {
+    return "index.html";
+  }
+
+  if (pathname.startsWith("/widgets/")) {
+    const remainder = pathname.slice("/widgets/".length);
+    return remainder.length > 0 ? remainder : "index.html";
+  }
+
+  if (pathname.startsWith("/assets/")) {
+    return pathname.slice(1); // keep "assets/..."
+  }
+
+  return null;
+}
+
 function serveStaticAsset(pathname: string, res: ServerResponse) {
-  const relative = pathname.replace(/^\/widgets\/?/, "");
+  const relative = resolveStaticPath(pathname);
   if (!relative) {
     res.writeHead(404).end("Not found");
     return;
@@ -679,7 +712,10 @@ const httpServer = createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && url.pathname.startsWith("/widgets/")) {
+  if (
+    req.method === "GET" &&
+    (url.pathname.startsWith("/widgets") || url.pathname.startsWith("/assets/"))
+  ) {
     serveStaticAsset(url.pathname, res);
     return;
   }

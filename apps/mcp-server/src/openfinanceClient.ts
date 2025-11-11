@@ -111,6 +111,25 @@ export class OpenFinanceClient {
     );
   }
 
+  async createDataConsent(params: {
+    permissions: string[];
+    validFrom?: string;
+    validUntil?: string;
+  }): Promise<JsonRecord> {
+    if (!Array.isArray(params.permissions) || params.permissions.length === 0) {
+      throw new Error("At least one permission is required for data consent.");
+    }
+
+    return this.request<JsonRecord>("/consent-create/bank-data", {
+      method: "POST",
+      body: JSON.stringify({
+        data_permissions: params.permissions,
+        valid_from: params.validFrom,
+        valid_until: params.validUntil,
+      }),
+    });
+  }
+
   async exchangeAuthorizationCode(
     code: string,
     codeVerifier: string

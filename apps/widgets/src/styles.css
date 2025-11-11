@@ -167,6 +167,42 @@ textarea {
   background: #fdfdfd;
 }
 
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.permission-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.permission-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(13, 20, 36, 0.12);
+  padding: 4px 10px;
+  background: #fff;
+  font-size: 0.8rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.permission-chip input {
+  accent-color: #1a56ff;
+}
+
+.permission-chip-selected {
+  border-color: #1a56ff;
+  background: rgba(26, 86, 255, 0.08);
+  color: #1a56ff;
+}
+
 .primary {
   border: none;
   border-radius: 14px;

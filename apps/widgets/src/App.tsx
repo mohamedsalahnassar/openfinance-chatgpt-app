@@ -97,6 +97,27 @@ const scopes = [
   { label: "Accounts + Payments", value: "openid accounts payments" },
 ];
 
+const dataPermissionOptions = [
+  "ReadAccountsBasic",
+  "ReadAccountsDetail",
+  "ReadBalances",
+  "ReadBeneficiariesBasic",
+  "ReadBeneficiariesDetail",
+  "ReadTransactionsBasic",
+  "ReadTransactionsDetail",
+  "ReadTransactionsCredits",
+  "ReadTransactionsDebits",
+  "ReadScheduledPaymentsBasic",
+  "ReadScheduledPaymentsDetail",
+  "ReadDirectDebits",
+  "ReadStandingOrdersBasic",
+  "ReadStandingOrdersDetail",
+  "ReadConsents",
+  "ReadPartyUser",
+  "ReadPartyUserIdentity",
+  "ReadParty",
+];
+
 function StatusBadge({ status }: { status: StepStatus }) {
   return (
     <span
@@ -140,12 +161,35 @@ export default function App() {
 
   const [messages, setMessages] = useState<string[]>([]);
 
+  const [dataConsentStatus, setDataConsentStatus] =
+    useState<StepStatus>("idle");
+  const [dataConsentPayload, setDataConsentPayload] =
+    useState<ConsentResponse | null>(null);
+  const [dataPermissions, setDataPermissions] = useState<string[]>([
+    "ReadAccountsBasic",
+    "ReadBalances",
+    "ReadTransactionsBasic",
+  ]);
+  const [dataValidFrom, setDataValidFrom] = useState("");
+  const [dataValidUntil, setDataValidUntil] = useState("");
+
   const recordMessage = (message: string) => {
     setMessages((prev) => [
       `${new Date().toLocaleTimeString()}: ${message}`,
       ...prev,
     ]);
   };
+
+  const toggleDataPermission = (permission: string) => {
+    setDataPermissions((current) =>
+      current.includes(permission)
+        ? current.filter((value) => value !== permission)
+        : [...current, permission]
+    );
+  };
+
+  const toIso = (value: string) =>
+    value ? new Date(value).toISOString() : undefined;
 
   const derivedAccessToken = useMemo(() => {
     if (tokenPayload?.access_token) return tokenPayload.access_token;
@@ -203,6 +247,39 @@ export default function App() {
     } catch (error) {
       setConsentStatus("error");
       recordMessage(`Consent creation failed: ${(error as Error).message}`);
+    }
+  };
+
+  const handleDataSharingConsent = async () => {
+    if (!dataPermissions.length) {
+      recordMessage("Select at least one permission before creating consent.");
+      setDataConsentStatus("error");
+      return;
+    }
+    setDataConsentStatus("loading");
+    try {
+      const isoFrom = toIso(dataValidFrom);
+      const isoUntil = toIso(dataValidUntil);
+      const payload = await apiRequest<ConsentResponse>(
+        "/consent-create/bank-data",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            data_permissions: dataPermissions,
+            ...(isoFrom && { valid_from: isoFrom }),
+            ...(isoUntil && { valid_until: isoUntil }),
+          }),
+        }
+      );
+      setDataConsentPayload(payload);
+      setCodeVerifierInput(payload.code_verifier);
+      setDataConsentStatus("success");
+      recordMessage("Data sharing consent created.");
+    } catch (error) {
+      setDataConsentStatus("error");
+      recordMessage(
+        `Data sharing consent failed: ${(error as Error).message}`
+      );
     }
   };
 
@@ -400,7 +477,7 @@ export default function App() {
         <article className="panel">
           <div className="panel-head">
             <div>
-              <h2>3. Create consent + redirect</h2>
+              <h2>3A. Create payment consent + redirect</h2>
               <p>Generate a consent record and PKCE verifier.</p>
             </div>
             <StatusBadge status={consentStatus} />
@@ -442,6 +519,90 @@ export default function App() {
               <div>
                 <span className="meta-label">Code verifier</span>
                 <code>{consentPayload.code_verifier}</code>
+              </div>
+            </div>
+          )}
+        </article>
+
+        <article className="panel">
+          <div className="panel-head">
+            <div>
+              <h2>3B. Create data sharing consent</h2>
+              <p>
+                Select data scopes and a validity window for account access
+                sharing.
+              </p>
+            </div>
+            <StatusBadge status={dataConsentStatus} />
+          </div>
+          <div className="permission-grid">
+            {dataPermissionOptions.map((permission) => {
+              const selected = dataPermissions.includes(permission);
+              return (
+                <label
+                  key={permission}
+                  className={clsx(
+                    "permission-chip",
+                    selected && "permission-chip-selected"
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selected}
+                    onChange={() => toggleDataPermission(permission)}
+                  />
+                  <span>{permission}</span>
+                </label>
+              );
+            })}
+          </div>
+          <div className="field-grid">
+            <label className="field">
+              <span>Valid from</span>
+              <input
+                type="datetime-local"
+                value={dataValidFrom}
+                onChange={(event) => setDataValidFrom(event.target.value)}
+              />
+            </label>
+            <label className="field">
+              <span>Valid until</span>
+              <input
+                type="datetime-local"
+                value={dataValidUntil}
+                onChange={(event) => setDataValidUntil(event.target.value)}
+              />
+            </label>
+          </div>
+          <div className="actions">
+            <button
+              className="primary"
+              onClick={handleDataSharingConsent}
+              disabled={dataConsentStatus === "loading"}
+            >
+              Create data consent
+            </button>
+            <button
+              className="ghost"
+              disabled={!dataConsentPayload?.redirect}
+              onClick={() => {
+                if (dataConsentPayload?.redirect) {
+                  window.open(dataConsentPayload.redirect, "_blank");
+                }
+              }}
+            >
+              Open redirect
+            </button>
+          </div>
+          {dataConsentPayload && (
+            <div className="consent-details">
+              <div>
+                <span className="meta-label">Consent</span>
+                <strong>{dataConsentPayload.consent_id}</strong>
+              </div>
+              <div>
+                <span className="meta-label">Code verifier</span>
+                <code>{dataConsentPayload.code_verifier}</code>
               </div>
             </div>
           )}

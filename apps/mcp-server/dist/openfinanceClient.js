@@ -70,6 +70,19 @@ export class OpenFinanceClient {
             body: JSON.stringify({ max_payment_amount: maxPaymentAmount }),
         });
     }
+    async createDataConsent(params) {
+        if (!Array.isArray(params.permissions) || params.permissions.length === 0) {
+            throw new Error("At least one permission is required for data consent.");
+        }
+        return this.request("/consent-create/bank-data", {
+            method: "POST",
+            body: JSON.stringify({
+                data_permissions: params.permissions,
+                valid_from: params.validFrom,
+                valid_until: params.validUntil,
+            }),
+        });
+    }
     async exchangeAuthorizationCode(code, codeVerifier) {
         return this.request("/token/authorization-code", {
             method: "POST",
