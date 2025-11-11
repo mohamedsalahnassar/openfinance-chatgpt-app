@@ -1,0 +1,695 @@
+openapi: 3.0.3
+info:
+  title: Hackathon - Starter Kit
+  description: >
+    This Hackathon starter kit is designed to give teams a quick head start 
+    on building integrations with Open Finance APIs.
+  version: 0.1.0
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Register
+    description: "To get started you will need to register the client you have been provided in your client pack"
+  - name: Consent Creation
+    description: "Endpoints for creating user consents"
+  - name: Tokens
+    description: "OAuth2.0 token issuance and refresh"
+  - name: Payment Initiation
+    description: "Endpoints for initiating and managing payments"
+  - name: Bank Data
+    description: "Retrieve and manage bank data consents"
+  - name: Products and Leads
+    description: "Endpoints for product discovery and leads management"
+  - name: Confimation of Payee
+    description: "Endpoints for Confimation of Payee"
+
+paths:
+  /register:
+    get:
+      summary: Register your client
+      description: >
+        This endpoint is used to register a client in the Hackathon starter kit.
+        It returns the registration details for confirmation.
+      tags:
+        - Register
+      responses:
+        '204':
+          description: Successful registration details retrieved
+        '400':
+          description: Bad request – client already exists
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "invalid_client_metadata"
+                  error_description:
+                    type: string
+                    example: "client_already_exists: client already exists"
+
+  /consent-create/bank-data:
+    post:
+      summary: Create a bank data authorization request
+      description: >
+        Generates a consent request for bank data access with specified permissions, 
+        signs the request using JWT, and returns a redirect link for authorization.
+      tags:
+        - Consent Creation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - data_permissions
+              properties:
+                data_permissions:
+                  type: array
+                  items:
+                    type: string
+                    enum:
+                      - ReadAccountsBasic
+                      - ReadAccountsDetail
+                      - ReadBalances
+                      - ReadBeneficiariesBasic
+                      - ReadBeneficiariesDetail
+                      - ReadTransactionsBasic
+                      - ReadTransactionsDetail
+                      - ReadTransactionsCredits
+                      - ReadTransactionsDebits
+                      - ReadScheduledPaymentsBasic
+                      - ReadScheduledPaymentsDetail
+                      - ReadDirectDebits
+                      - ReadStandingOrdersBasic
+                      - ReadStandingOrdersDetail
+                      - ReadConsents
+                      - ReadPartyUser
+                      - ReadPartyUserIdentity
+                      - ReadParty
+              example:
+                data_permissions:
+                  - ReadAccountsBasic
+                  - ReadBalances
+      responses:
+        '200':
+          description: Authorization request created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  redirect:
+                    type: string
+                  consent_id:
+                    type: string
+                  code_verifier:
+                    type: string
+        '400':
+          description: Invalid request due to missing or incorrect data_permissions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  description:
+                    type: string
+                    example: Invalid data_permissions
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Internal server error"
+
+  /consent-create/single-payment:
+    post:
+      summary: Create a single instant payment consent
+      description: >
+        Generates a consent request for a single instant payment of a specified amount,
+        signs the request using JWT, and returns a redirect link for authorization.
+      tags:
+        - Consent Creation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - payment_amount
+              properties:
+                payment_amount:
+                  type: string
+                  pattern: "^(?:0|[1-9]\\d*)(\\.\\d{2})$"
+                  description: Payment amount in AED with 2 decimal places
+              example:
+                payment_amount: "100.00"
+      responses:
+        '200':
+          description: Payment consent request created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  redirect:
+                    type: string
+                  consent_id:
+                    type: string
+                  code_verifier:
+                    type: string
+        '400':
+          description: Invalid request due to missing or incorrect payment_amount
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Invalid payment_amount"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Internal server error"
+
+  /consent-create/variable-on-demand-payments:
+    post:
+      summary: Create a variable on-demand payment consent
+      description: >
+        Generates a consent request for a variable on-demand payment up to a specified maximum amount,
+        signs the request using JWT, and returns a redirect link for authorization.
+      tags:
+        - Consent Creation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - max_payment_amount
+              properties:
+                max_payment_amount:
+                  type: string
+                  pattern: "^(?:0|[1-9]\\d*)(\\.\\d{2})$"
+                  description: Maximum payment amount in AED with 2 decimal places
+              example:
+                max_payment_amount: "100.00"
+      responses:
+        '200':
+          description: Payment consent request created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  redirect:
+                    type: string
+                  consent_id:
+                    type: string
+                  code_verifier:
+                    type: string
+        '400':
+          description: Invalid request due to missing or incorrect max_payment_amount
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Invalid max_payment_amount"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Internal server error"
+
+  /token/client-credentials:
+    post:
+      summary: Obtain client credentials token
+      tags:
+        - Tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - scope
+              properties:
+                scope:
+                  type: string
+                  enum:
+                    - confirmation-of-payee
+                    - openid payments
+                    - openid accounts
+                    - openid products
+              example:
+                scope: "confirmation-of-payee"
+      responses:
+        '200':
+          description: Client credentials token issued successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                  token_type:
+                    type: string
+                  expires_in:
+                    type: integer
+                  scope:
+                    type: string
+        '400':
+          description: Invalid request due to missing or unsupported scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  description:
+                    type: string
+                    example: "Invalid scope"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Internal server error"
+
+  /token/authorization-code:
+    post:
+      summary: Exchange authorization code for tokens
+      tags:
+        - Tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - code
+                - code_verifier
+              properties:
+                code:
+                  type: string
+                code_verifier:
+                  type: string
+              example:
+                code: "abc123authorizationcode"
+                code_verifier: "xyz456codeverifier"
+      responses:
+        '200':
+          description: Tokens issued successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                  refresh_token:
+                    type: string
+                  token_type:
+                    type: string
+                  expires_in:
+                    type: integer
+                  scope:
+                    type: string
+        '400':
+          description: Missing or invalid code/code_verifier
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  description:
+                    type: string
+                    example: "code and code_verifier required"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Internal server error"
+
+  /token/refresh-token:
+    post:
+      summary: Refresh access token using a refresh token
+      tags:
+        - Tokens
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - refresh_token
+              properties:
+                refresh_token:
+                  type: string
+              example:
+                refresh_token: "xyz456refreshtoken"
+      responses:
+        '200':
+          description: Access token refreshed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                  refresh_token:
+                    type: string
+                  token_type:
+                    type: string
+                  expires_in:
+                    type: integer
+                  scope:
+                    type: string
+        '400':
+          description: Missing or invalid refresh_token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  description:
+                    type: string
+                    example: "refresh_token required"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Internal server error"
+
+  /open-finance/account-information/v1.2/accounts:
+    get:
+      summary: Retrieve all accounts
+      tags:
+        - Bank Data
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Successful response with accounts list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  Data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        AccountId:
+                          type: string
+                        AccountType:
+                          type: string
+                        AccountSubType:
+                          type: string
+                        Currency:
+                          type: string
+                  Links:
+                    type: object
+                  Meta:
+                    type: object
+              example:
+                Data:
+                  - AccountId: "123456789"
+                    AccountType: "Checking"
+                    AccountSubType: "Current"
+                    Currency: "AED"
+                Links:
+                  Self: "/open-finance/account-information/v1.2/accounts"
+                Meta:
+                  TotalPages: 1
+        '400':
+          description: Missing or invalid Authorization header
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Access token required"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Internal server error"
+
+  /open-finance/account-information/v1.2/accounts/{accountId}/balances:
+    get:
+      summary: Retrieve account balances
+      tags:
+        - Bank Data
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: path
+          name: accountId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response with account balances
+          content:
+            application/json:
+              schema:
+                type: object
+              example:
+                Data:
+                  - BalanceType: "ClosingAvailable"
+                    Amount:
+                      Amount: "1000.00"
+                      Currency: "AED"
+                Links:
+                  Self: "/open-finance/account-information/v1.2/accounts/123456789/balances"
+                Meta:
+                  TotalPages: 1
+        '400':
+          description: Missing accountId or invalid Authorization header
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  description:
+                    type: string
+                    example: "accountId required"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Internal server error"
+
+  /open-finance/payment/v1.2/payments:
+    post:
+      summary: Retrieve products balances
+      description: Endpoint to initiate a payment. Requires an access token.
+      tags:
+        - Payment Initiation
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - payment_amount
+                - consent_id
+              properties:
+                payment_amount:
+                  type: string
+                  description: Payment amount in format "0.00"
+                  example: "100.00"
+                consent_id:
+                  type: string
+                  description: Consent identifier
+                  example: "abc123-consent-id"
+      responses:
+        '200':
+          description: Payment created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  interactionId:
+                    type: string
+                    example: "550e8400-e29b-41d4-a716-446655440000"
+        '400':
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Invalid payment_amount"
+
+  /open-finance/product/v1.2/products:
+    get:
+      summary: Get products
+      description: Endpoint to retrieve product data.
+      tags:
+        - Products and Leads
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Successful response with product list
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: Missing or invalid Authorization header
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Access token required"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Internal server error"
+  /open-finance/confirmation-of-payee/v1.2/confirmation:
+    post:
+      summary: Confirm user IBAN and identity
+      description: >
+        This endpoint verifies and confirms a user's IBAN and identity information.  
+        Requires an access token in the `Authorization` header.
+      tags:
+        - Confimation of Payee
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - iban
+                - full_name
+                - given_name
+                - last_name
+              properties:
+                iban:
+                  type: string
+                  example: AE070331234567890123456
+                  description: International Bank Account Number (IBAN).
+                full_name:
+                  type: string
+                  example: Noura Al Mazrouei
+                  description: Full name of the user.
+                given_name:
+                  type: string
+                  example: Noura
+                  description: User's given (first) name.
+                last_name:
+                  type: string
+                  example: Mazrouei
+                  description: User's family (last) name.
+      responses:
+        '200':
+          description: Confirmation request created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          description: Missing required fields
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: iban, full_name, given_name, last_name are required
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "Internal server error"
