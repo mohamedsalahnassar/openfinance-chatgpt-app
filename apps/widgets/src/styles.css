@@ -263,6 +263,12 @@ textarea {
   color: #3a4050;
 }
 
+.info-text {
+  margin: -4px 0 8px;
+  font-size: 0.85rem;
+  color: #1a56ff;
+}
+
 .error-text {
   color: #c62828;
   font-weight: 600;

@@ -118,6 +118,12 @@ const dataPermissionOptions = [
   "ReadParty",
 ];
 
+const toLocalDateTimeInputValue = (date: Date) => {
+  const tzOffsetMs = date.getTimezoneOffset() * 60000;
+  const local = new Date(date.getTime() - tzOffsetMs);
+  return local.toISOString().slice(0, 16);
+};
+
 function StatusBadge({ status }: { status: StepStatus }) {
   return (
     <span
@@ -170,8 +176,15 @@ export default function App() {
     "ReadBalances",
     "ReadTransactionsBasic",
   ]);
-  const [dataValidFrom, setDataValidFrom] = useState("");
-  const [dataValidUntil, setDataValidUntil] = useState("");
+  const [dataValidFrom, setDataValidFrom] = useState(
+    toLocalDateTimeInputValue(new Date())
+  );
+  const [dataValidUntil, setDataValidUntil] = useState(
+    toLocalDateTimeInputValue(
+      new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)
+    )
+  );
+  const [manualAccessToken, setManualAccessToken] = useState("");
 
   const recordMessage = (message: string) => {
     setMessages((prev) => [
@@ -192,10 +205,11 @@ export default function App() {
     value ? new Date(value).toISOString() : undefined;
 
   const derivedAccessToken = useMemo(() => {
+    if (manualAccessToken.trim()) return manualAccessToken.trim();
     if (tokenPayload?.access_token) return tokenPayload.access_token;
     if (clientToken) return clientToken;
     return null;
-  }, [tokenPayload?.access_token, clientToken]);
+  }, [manualAccessToken, tokenPayload?.access_token, clientToken]);
 
   const handleRegister = async () => {
     setRegisterStatus("loading");
@@ -393,6 +407,8 @@ export default function App() {
       recordMessage(`Balance aggregation failed: ${message}`);
     }
   };
+
+  const manualTokenActive = manualAccessToken.trim().length > 0;
 
   const primaryBalanceToken = derivedAccessToken
     ? `${derivedAccessToken.slice(0, 8)}…${derivedAccessToken.slice(-4)}`
@@ -654,6 +670,19 @@ export default function App() {
             </div>
             <StatusBadge status={balanceStatus} />
           </div>
+          <label className="field">
+            <span>Manual access token (optional override)</span>
+            <input
+              value={manualAccessToken}
+              onChange={(event) => setManualAccessToken(event.target.value)}
+              placeholder="Paste token captured from redirect"
+            />
+          </label>
+          {manualTokenActive && (
+            <p className="info-text">
+              Manual token override active — steps 2 and 4 can be skipped.
+            </p>
+          )}
           <button
             className="primary"
             onClick={handleBalances}

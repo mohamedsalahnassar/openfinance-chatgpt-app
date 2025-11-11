@@ -25,6 +25,7 @@ import bankData from './api/routes/bankData.js'
 import paymentInitiation from './api/routes/paymentInitiation.js'
 import productsAndLeads from './api/routes/productsAndLeads.js'
 import confirmationOfPayee from './api/routes/confirmationOfPayee.js'
+import authDebug from './api/routes/authDebug.js'
 
 
 
@@ -44,6 +45,7 @@ app.use('/open-finance/account-information/v1.2', bankData);
 app.use('/open-finance/payment/v1.2', paymentInitiation);
 app.use('/open-finance/product/v1.2', productsAndLeads);
 app.use('/open-finance/confirmation-of-payee/v1.2', confirmationOfPayee);
+app.use('', authDebug);
 
 
 

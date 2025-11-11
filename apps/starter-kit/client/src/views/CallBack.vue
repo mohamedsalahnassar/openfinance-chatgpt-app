@@ -44,6 +44,34 @@ export default {
       return;
     }
 
+    const sharedSnapshot = {
+      code,
+      code_verifier,
+      consent_id,
+      state,
+      redirect_query: this.$route.query,
+    };
+
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      try {
+        window.sessionStorage.setItem(
+          'openfinance:lastAuthCode',
+          JSON.stringify({
+            ...sharedSnapshot,
+            storedAt: new Date().toISOString(),
+          })
+        );
+      } catch (error) {
+        console.warn('Failed to store auth code snapshot in sessionStorage', error);
+      }
+    }
+
+    try {
+      await api.post('/debug/auth-code', sharedSnapshot);
+    } catch (error) {
+      console.warn('Failed to persist auth code snapshot to API', error);
+    }
+
     const request = {
       code,
       code_verifier,
