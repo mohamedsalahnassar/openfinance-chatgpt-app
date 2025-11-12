@@ -1,9 +1,22 @@
 import { useMemo, useState } from "react";
 import clsx from "clsx";
 
+declare global {
+  interface Window {
+    __OPENFINANCE_API_BASE__?: string;
+  }
+}
+
 const DEFAULT_BASE = "http://localhost:1411";
-const API_BASE = (import.meta.env.VITE_STARTER_KIT_BASE_URL ??
-  DEFAULT_BASE).replace(/\/$/, "");
+
+const runtimeBase =
+  typeof window !== "undefined" ? window.__OPENFINANCE_API_BASE__ : undefined;
+
+const API_BASE = (
+  import.meta.env.VITE_STARTER_KIT_BASE_URL ??
+  runtimeBase ??
+  DEFAULT_BASE
+).replace(/\/$/, "");
 
 type StepStatus = "idle" | "loading" | "success" | "error";
 
@@ -120,8 +133,8 @@ const dataPermissionOptions = [
 
 const toLocalDateTimeInputValue = (date: Date) => {
   const tzOffsetMs = date.getTimezoneOffset() * 60000;
-  const local = new Date(date.getTime() - tzOffsetMs);
-  return local.toISOString().slice(0, 16);
+  const localDate = new Date(date.getTime() - tzOffsetMs);
+  return localDate.toISOString().slice(0, 16);
 };
 
 function StatusBadge({ status }: { status: StepStatus }) {

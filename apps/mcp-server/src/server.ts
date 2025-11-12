@@ -3,8 +3,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
-import { createReadStream, existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { createReadStream, existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, URL } from "node:url";
 
@@ -35,17 +34,93 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..", "..", "..");
-const widgetsDistDir = path.resolve(projectRoot, "apps/widgets/dist");
+const assetsRoot = path.resolve(projectRoot, "assets/openfinance-consent-flow");
+const assetBundleDir = path.join(assetsRoot, "assets");
 
 const port = Number.parseInt(process.env.MCP_PORT ?? "9035", 10);
-const starterKitBase =
-  process.env.STARTER_KIT_BASE_URL ?? "http://localhost:1411";
+const starterKitBase = (process.env.STARTER_KIT_BASE_URL ??
+  "http://localhost:1411") as string;
+const normalizedStarterKitBase = starterKitBase.replace(/\/+$/, "");
 const publicBase = (process.env.PUBLIC_BASE_URL ??
   `http://localhost:${port}`) as string;
 const normalizedPublicBase = publicBase.replace(/\/+$/, "");
-const widgetBaseUrl = `${normalizedPublicBase}/widgets`;
 
 const openFinanceClient = new OpenFinanceClient(starterKitBase);
+
+function extractAssetRevision(fileName: string): string | null {
+  const match = fileName.match(/-([a-z0-9]+)\.[^.]+$/i);
+  return match?.[1] ?? null;
+}
+
+function ensureAssetDirectory() {
+  if (!existsSync(assetBundleDir)) {
+    throw new Error(
+      `Widget assets not found in ${assetBundleDir}. Run "npm run build:widgets" from the project root.`
+    );
+  }
+}
+
+function findAssetFile(extension: string): string {
+  ensureAssetDirectory();
+  const entries = readdirSync(assetBundleDir);
+  const match = entries.find(
+    (entry) =>
+      entry.startsWith("index-") &&
+      entry.toLowerCase().endsWith(`.${extension.toLowerCase()}`)
+  );
+  if (!match) {
+    throw new Error(
+      `Unable to locate ${extension} bundle in ${assetBundleDir}.`
+    );
+  }
+  return match;
+}
+
+function escapeScriptContents(source: string): string {
+  return source.replace(/<\/script/gi, "<\\/script");
+}
+
+type WidgetAssetState = {
+  html: string;
+  revision: string;
+  cssFile: string;
+  jsFile: string;
+};
+
+function loadWidgetAssets(): WidgetAssetState {
+  const cssFile = findAssetFile("css");
+  const jsFile = findAssetFile("js");
+  const cssPath = path.join(assetBundleDir, cssFile);
+  const jsPath = path.join(assetBundleDir, jsFile);
+  const cssText = readFileSync(cssPath, "utf8");
+  const jsText = readFileSync(jsPath, "utf8");
+  const revision =
+    extractAssetRevision(jsFile) ??
+    extractAssetRevision(cssFile) ??
+    Date.now().toString(36);
+
+  const widgetHtml = `
+<div id="root"></div>
+<style>${cssText}</style>
+<script>
+window.__OPENFINANCE_API_BASE__ = ${JSON.stringify(
+    normalizedStarterKitBase
+  )};
+</script>
+<script type="module">
+${escapeScriptContents(jsText)}
+</script>
+`.trim();
+
+  return {
+    html: widgetHtml,
+    revision,
+    cssFile,
+    jsFile,
+  };
+}
+
+const widgetAssets = loadWidgetAssets();
 
 type WidgetDescriptor = {
   id: string;
@@ -57,37 +132,16 @@ type WidgetDescriptor = {
   html: string;
 };
 
-function rewriteAssetPaths(html: string, assetBase: string): string {
-  const normalized = assetBase.replace(/\/+$/, "");
-  return html.replace(
-    /(href|src)=([`'"])(\/assets\/[^"'`]+)\2/gi,
-    (_match, attr, quote, assetPath) =>
-      `${attr}=${quote}${normalized}${assetPath}${quote}`
-  );
-}
-
-async function loadWidgetDescriptor(): Promise<WidgetDescriptor> {
-  const htmlPath = path.join(widgetsDistDir, "index.html");
-  if (!existsSync(htmlPath)) {
-    throw new Error(
-      `Widget bundle not found at ${htmlPath}. Run "npm run build:widgets" from the project root.`
-    );
-  }
-  const rawHtml = await readFile(htmlPath, "utf8");
-  const html = rewriteAssetPaths(rawHtml, widgetBaseUrl);
-  return {
-    id: "openfinance-consent-flow",
-    title: "Consent + balance orchestrator",
-    description:
-      "Guided UI that walks through consent authorization and balance aggregation using the Open Finance starter kit.",
-    templateUri: "ui://widget/openfinance/consent-flow",
-    invoking: "Preparing consent orchestrator",
-    invoked: "Consent orchestrator ready",
-    html,
-  };
-}
-
-const consentWidget = await loadWidgetDescriptor();
+const consentWidget: WidgetDescriptor = {
+  id: "openfinance-consent-flow",
+  title: "Consent + balance orchestrator",
+  description:
+    "Guided UI that walks through consent authorization and balance aggregation using the Open Finance starter kit.",
+  templateUri: `ui://widget/openfinance/consent-flow?rev=${widgetAssets.revision}`,
+  invoking: "Preparing consent orchestrator",
+  invoked: "Consent orchestrator ready",
+  html: widgetAssets.html,
+};
 const widgets = [consentWidget];
 const widgetsByUri = new Map(widgets.map((widget) => [widget.templateUri, widget]));
 
@@ -476,7 +530,6 @@ const tools: Tool[] = [
           },
         ],
         structuredContent: {
-          starterKitBaseUrl: starterKitBase,
           scope: args.scope ?? "openid accounts",
           maxPaymentAmount: args.maxPaymentAmount ?? "250.00",
         },
@@ -634,32 +687,21 @@ function contentTypeFor(filePath: string) {
   }
 }
 
-function resolveStaticPath(pathname: string): string | null {
-  if (pathname === "/widgets" || pathname === "/widgets/") {
-    return "index.html";
-  }
-
-  if (pathname.startsWith("/widgets/")) {
-    const remainder = pathname.slice("/widgets/".length);
-    return remainder.length > 0 ? remainder : "index.html";
-  }
-
-  if (pathname.startsWith("/assets/")) {
-    return pathname.slice(1); // keep "assets/..."
-  }
-
-  return null;
+function serveInlinedWidget(res: ServerResponse) {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Content-Type", "text/html; charset=utf-8");
+  res.writeHead(200).end(consentWidget.html);
 }
 
-function serveStaticAsset(pathname: string, res: ServerResponse) {
-  const relative = resolveStaticPath(pathname);
+function serveBundledAsset(pathname: string, res: ServerResponse) {
+  const relative = pathname.replace(/^\/assets\/?/, "");
   if (!relative) {
     res.writeHead(404).end("Not found");
     return;
   }
   const safeRelative = path.normalize(relative).replace(/^(\.\.(\/|\\|$))+/, "");
-  const filePath = path.join(widgetsDistDir, safeRelative);
-  if (!filePath.startsWith(widgetsDistDir)) {
+  const filePath = path.join(assetBundleDir, safeRelative);
+  if (!filePath.startsWith(assetBundleDir)) {
     res.writeHead(403).end("Forbidden");
     return;
   }
@@ -712,11 +754,13 @@ const httpServer = createServer(async (req, res) => {
     return;
   }
 
-  if (
-    req.method === "GET" &&
-    (url.pathname.startsWith("/widgets") || url.pathname.startsWith("/assets/"))
-  ) {
-    serveStaticAsset(url.pathname, res);
+  if (req.method === "GET" && url.pathname.startsWith("/widgets")) {
+    serveInlinedWidget(res);
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname.startsWith("/assets/")) {
+    serveBundledAsset(url.pathname, res);
     return;
   }
 
@@ -735,6 +779,6 @@ httpServer.listen(port, () => {
   console.log(
     `Messages endpoint: POST ${normalizedPublicBase}${postPath}?sessionId=<id>`
   );
-  console.log(`Widget assets served from ${widgetBaseUrl}`);
-  console.log(`Starter kit base: ${starterKitBase}`);
+  console.log(`Widget assets directory: ${assetsRoot}`);
+  console.log(`Starter kit base: ${normalizedStarterKitBase}`);
 });

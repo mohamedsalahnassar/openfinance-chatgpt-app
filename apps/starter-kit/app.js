@@ -7,6 +7,7 @@ import fs from 'fs'
 import YAML from "yaml";
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createProxyMiddleware } from 'http-proxy-middleware';
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -46,6 +47,17 @@ app.use('/open-finance/payment/v1.2', paymentInitiation);
 app.use('/open-finance/product/v1.2', productsAndLeads);
 app.use('/open-finance/confirmation-of-payee/v1.2', confirmationOfPayee);
 app.use('', authDebug);
+
+const MCP_TARGET = process.env.MCP_SERVER_URL || 'http://localhost:9035';
+app.use(
+  ['/mcp', '/mcp/messages', '/widgets', '/assets'],
+  createProxyMiddleware({
+    target: MCP_TARGET,
+    changeOrigin: true,
+    ws: true,
+    logLevel: 'warn',
+  })
+);
 
 
 

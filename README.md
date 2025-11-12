@@ -50,10 +50,24 @@ openfinance-chatgpt-app/
 | --- | --- | --- |
 | `PORT` | `1411` | Express server port for the starter kit |
 | `MCP_PORT` | `9035` | Port for the MCP SSE server and static widget assets |
-| `STARTER_KIT_BASE_URL` | `http://localhost:1411` | URL the MCP server/wigdet uses when calling the backend APIs |
-| `PUBLIC_BASE_URL` | `http://localhost:${MCP_PORT}` | The publicly reachable base URL for the MCP server (used to form widget asset URLs) |
+| `STARTER_KIT_BASE_URL` | `http://localhost:1411` | URL the MCP server embeds inside the widget for API calls |
+| `PUBLIC_BASE_URL` | `http://localhost:${MCP_PORT}` | Public base used for MCP logs & absolute URLs |
+| `MCP_SERVER_URL` | `http://localhost:9035` | Target that the Express server proxies `/mcp`, `/widgets`, and `/assets` requests to (set this when the MCP server runs on a different host/port) |
+
+> **Widget build target:** the React widget now follows the [OpenAI Apps Directory Kit](../OpenAI-Apps-Directory-Kit) pattern. `npm run build:widgets` outputs hashed bundles to `assets/openfinance-consent-flow/` and the MCP server inlines the CSS/JS when it responds to ChatGPT. To hit a hosted backend instead of `localhost`, pass `VITE_STARTER_KIT_BASE_URL` at build time:
+
+```bash
+VITE_STARTER_KIT_BASE_URL="https://<your-ngrok>.ngrok-free.app" npm run build:widgets
+```
 
 Export any of these before running `npm run dev` if you need non-default ports or are tunneling through `ngrok`.
+
+### Single ngrok endpoint (matching the OpenAI Apps Directory Kit flow)
+
+1. Start everything locally with `npm run dev`. The Express app listens on port `1411`, proxies `/mcp`, `/mcp/messages`, `/widgets`, and `/assets` to the MCP server, and serves the starter-kit REST APIs.
+2. Build the widget against the public URL that ngrok will expose (see the `VITE_STARTER_KIT_BASE_URL` example above) so the UI calls the HTTPS origin ChatGPT can reach.
+3. Run `ngrok http 1411` and copy the HTTPS forwarding URL (for example, `https://<random>.ngrok-free.app`).
+4. Add that URL to ChatGPT as both the API base and the MCP endpoint (`https://<ngrok>/mcp`). Because the widgets inline their JS/CSS (same approach as the Directory Kit), no additional static hosting is required.
 
 ## MCP tooling
 
@@ -83,7 +97,7 @@ Each step persists responses, exposes helpers (open redirect link, copy verifier
 
 | Command | Description |
 | --- | --- |
-| `npm run dev` | Runs the starter kit (`apps/starter-kit`) and MCP server (`apps/mcp-server`) concurrently. |
+| `npm run dev` | Runs the starter kit (`apps/starter-kit`) and MCP server (`apps/mcp-server`) concurrently. Expose *port 1411* via ngrok to give ChatGPT a single HTTPS endpoint for both REST APIs and the MCP server. |
 | `npm run dev:kit` | Starts only the Express + Vite starter kit. |
 | `npm run dev:mcp` | Starts only the MCP server (watches TypeScript files). |
 | `npm run build:widgets` | Rebuilds the consent widget assets. |
