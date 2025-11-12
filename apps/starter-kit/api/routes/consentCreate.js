@@ -4,13 +4,15 @@ import config from '../config.js'
 import { JWTSign, CreateClientAssertion, encryptPII } from '../services/JWTCreator.js'
 import CryptoJS from 'crypto-js';
 import { v4 as uuidv4 } from 'uuid';
+import { logInfo, logError, logDebug, summarizePayload } from '../logger.js';
 
 const router = Router();
 
 
 router.post('/single-payment', async (req, res) => {
 
-    const { payment_amount } = req.body;
+    const { payment_amount, bank_label } = req.body;
+    const bankLabel = bank_label || 'unspecified';
 
     if (
         typeof payment_amount !== 'string' ||
@@ -21,6 +23,10 @@ router.post('/single-payment', async (req, res) => {
         return res.status(400).json({ error: 'Invalid payment_amount' });
     }
 
+    logInfo('[consent-create] Single instant payment consent requested', {
+        payment_amount,
+        bank: bankLabel,
+    });
 
     const PII = {
         "Initiation": {
@@ -69,8 +75,6 @@ router.post('/single-payment', async (req, res) => {
 
     const encryptedPII = await encryptPII(PII)
 
-    console.log('encryptedPII', encryptedPII)
-
     const now = new Date();
     const expirationConsent = new Date(
         now.getFullYear(),
@@ -118,15 +122,10 @@ router.post('/single-payment', async (req, res) => {
         }
     ]
 
-    console.log(authorizationDetails)
-
     const nonce = uuidv4()
 
 
     const codeVerifier = uuidv4() + uuidv4();
-
-    console.log(codeVerifier)
-
 
     const hashedCodeVerifier = CryptoJS.SHA256(codeVerifier);
     let codeChallenge = CryptoJS.enc.Base64.stringify(hashedCodeVerifier);
@@ -143,8 +142,18 @@ router.post('/single-payment', async (req, res) => {
         consent_id: consentId
     };
 
-    console.log(codeVerifier)
-    console.log(codeChallenge)
+    logInfo('[consent-create] Prepared single payment consent payload', {
+        consentId,
+        expirationConsent,
+        payment_amount,
+        piiCipherLength: encryptedPII.length,
+        bank: bankLabel,
+    });
+
+    logDebug('[consent-create] PKCE material ready', {
+        consentId,
+        codeVerifierPreview: `${codeVerifier.slice(0, 6)}…`,
+    });
 
     const state = btoa(JSON.stringify(stateData));
 
@@ -164,11 +173,7 @@ router.post('/single-payment', async (req, res) => {
     const signedRequest = await JWTSign(request)
 
 
-    console.log(config.CLIENT_ASSERTION)
-
     const signedClientAssertion = await CreateClientAssertion()
-
-    console.log(signedClientAssertion)
 
     const data = {
         'client_id': config.CLIENT_ID,
@@ -188,25 +193,40 @@ router.post('/single-payment', async (req, res) => {
         data: data,
     };
 
-    console.log(requestConfig)
+    logInfo('[consent-create] Sending single payment PAR request', {
+        consentId,
+        endpoint: config.PAR_ENDPOINT,
+        bank: bankLabel,
+    });
 
     try {
         const response = await axiosOF.request(requestConfig);
         const authEndpoint = config.AUTH_ENDPOINT
 
         const redirectLink = `${authEndpoint}?client_id=${config.CLIENT_ID}&response_type=code&scope=openid&request_uri=${response.data.request_uri}`;
+        logInfo('[consent-create] Single payment consent ready', {
+            consentId,
+            redirect: redirectLink,
+            bank: bankLabel,
+        });
         res.status(response.status).json({ redirect: redirectLink, consent_id: consentId, code_verifier: codeVerifier });
 
     } catch (error) {
-        console.error(error.response?.data || error.message);
-        // Send the error response to the client
+        logError('[consent-create] Single payment consent failed', {
+            consentId,
+            status: error.response?.status,
+            data: summarizePayload(error.response?.data),
+            message: error.message,
+            bank: bankLabel,
+        });
         res.status(error.response?.status || 500).json(error.response?.data || { error: error.message });
     }
 });
 
 router.post('/variable-on-demand-payments', async (req, res) => {
 
-    const { max_payment_amount } = req.body;
+    const { max_payment_amount, bank_label } = req.body;
+    const bankLabel = bank_label || 'unspecified';
 
     if (
         typeof max_payment_amount !== 'string' ||
@@ -217,6 +237,10 @@ router.post('/variable-on-demand-payments', async (req, res) => {
         return res.status(400).json({ error: 'Invalid max_payment_amount' });
     }
 
+    logInfo('[consent-create] VRP consent requested', {
+        max_payment_amount,
+        bank: bankLabel,
+    });
 
     const PII = {
         "Initiation": {
@@ -331,8 +355,6 @@ router.post('/variable-on-demand-payments', async (req, res) => {
         }
     ]
 
-    console.log(authorizationDetails)
-
     const nonce = uuidv4()
 
     const codeVerifier = uuidv4() + uuidv4();
@@ -369,11 +391,7 @@ router.post('/variable-on-demand-payments', async (req, res) => {
     const signedRequest = await JWTSign(request)
 
 
-    console.log(config.CLIENT_ASSERTION)
-
     const signedClientAssertion = await CreateClientAssertion()
-
-    console.log(signedClientAssertion)
 
     const data = {
         'client_id': config.CLIENT_ID,
@@ -384,8 +402,17 @@ router.post('/variable-on-demand-payments', async (req, res) => {
 
     const interactionId = uuidv4()
 
-    console.log('consentId', consentId)
-    console.log('interactionId', interactionId)
+    logInfo('[consent-create] VRP consent payload prepared', {
+        consentId,
+        interactionId,
+        max_payment_amount,
+        periodStart,
+        bank: bankLabel,
+    });
+    logDebug('[consent-create] VRP PKCE ready', {
+        consentId,
+        codeVerifierPreview: `${codeVerifier.slice(0, 6)}…`,
+    });
 
     const requestConfig = {
         method: 'post',
@@ -398,18 +425,34 @@ router.post('/variable-on-demand-payments', async (req, res) => {
         data: data,
     };
 
-    console.log(requestConfig)
+    logInfo('[consent-create] Sending VRP PAR request', {
+        consentId,
+        endpoint: config.PAR_ENDPOINT,
+        interactionId,
+        bank: bankLabel,
+    });
 
     try {
         const response = await axiosOF.request(requestConfig);
         const authEndpoint = config.AUTH_ENDPOINT
 
         const redirectLink = `${authEndpoint}?client_id=${config.CLIENT_ID}&response_type=code&scope=openid&request_uri=${response.data.request_uri}`;
+        logInfo('[consent-create] VRP consent ready', {
+            consentId,
+            redirect: redirectLink,
+            bank: bankLabel,
+        });
         res.status(response.status).json({ redirect: redirectLink, consent_id: consentId, code_verifier: codeVerifier });
 
     } catch (error) {
-        console.error(error.response?.data || error.message);
-        // Send the error response to the client
+        logError('[consent-create] VRP consent failed', {
+            consentId,
+            interactionId,
+            status: error.response?.status,
+            data: summarizePayload(error.response?.data),
+            message: error.message,
+            bank: bankLabel,
+        });
         res.status(error.response?.status || 500).json(error.response?.data || { error: error.message });
     }
 });
@@ -417,7 +460,8 @@ router.post('/variable-on-demand-payments', async (req, res) => {
 
 router.post('/bank-data', async (req, res) => {
 
-    const { data_permissions, valid_from, valid_until } = req.body;
+    const { data_permissions, valid_from, valid_until, bank_label } = req.body;
+    const bankLabel = bank_label || 'unspecified';
 
     const allowedPermissions = [
         'ReadAccountsBasic',
@@ -476,6 +520,13 @@ router.post('/bank-data', async (req, res) => {
         });
     }
 
+    logInfo('[consent-create] Data sharing consent requested', {
+        permissions: data_permissions,
+        valid_from,
+        valid_until,
+        bank: bankLabel,
+    });
+
     const consentId = uuidv4()
 
     const authorizationDetails = [
@@ -508,7 +559,13 @@ router.post('/bank-data', async (req, res) => {
         }
     ]
 
-    console.log(authorizationDetails)
+    logInfo('[consent-create] Data sharing consent payload prepared', {
+        consentId,
+        permissions: data_permissions.length,
+        validFrom: parsedValidFrom,
+        validUntil: parsedValidUntil,
+        bank: bankLabel,
+    });
 
     const nonce = uuidv4()
 
@@ -547,12 +604,13 @@ router.post('/bank-data', async (req, res) => {
     const signedRequest = await JWTSign(request)
 
     const interactionId = uuidv4()
-    console.log('consentId', consentId)
-    console.log('interactionId', interactionId)
+    logDebug('[consent-create] Data consent PKCE ready', {
+        consentId,
+        interactionId,
+        codeVerifierPreview: `${codeVerifier.slice(0, 6)}…`,
+    });
 
     const signedClientAssertion = await CreateClientAssertion()
-
-    console.log(signedClientAssertion)
 
     const data = {
         'client_id': config.CLIENT_ID,
@@ -573,18 +631,34 @@ router.post('/bank-data', async (req, res) => {
         data: data,
     };
 
-    console.log(requestConfig)
+    logInfo('[consent-create] Sending data consent PAR request', {
+        consentId,
+        interactionId,
+        endpoint: config.PAR_ENDPOINT,
+        bank: bankLabel,
+    });
 
     try {
         const response = await axiosOF.request(requestConfig);
         const authEndpoint = config.AUTH_ENDPOINT
 
         const redirectLink = `${authEndpoint}?client_id=${config.CLIENT_ID}&response_type=code&scope=openid&request_uri=${response.data.request_uri}`;
+        logInfo('[consent-create] Data sharing consent ready', {
+            consentId,
+            redirect: redirectLink,
+            bank: bankLabel,
+        });
         res.status(response.status).json({ redirect: redirectLink, consent_id: consentId, code_verifier: codeVerifier });
 
     } catch (error) {
-        console.error(error.response?.data || error.message);
-        // Send the error response to the client
+        logError('[consent-create] Data sharing consent failed', {
+            consentId,
+            interactionId,
+            status: error.response?.status,
+            data: summarizePayload(error.response?.data),
+            message: error.message,
+            bank: bankLabel,
+        });
         res.status(error.response?.status || 500).json(error.response?.data || { error: error.message });
     }
 });

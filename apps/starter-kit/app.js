@@ -9,6 +9,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 
+import { logInfo, logError, summarizePayload } from './api/logger.js';
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -34,6 +36,30 @@ import authDebug from './api/routes/authDebug.js'
 const app = express();
 app.use(express.json());
 app.use(cors());
+
+const shouldLogRequest = (url = '') =>
+  url.startsWith('/consent-create') ||
+  url.startsWith('/token') ||
+  url.startsWith('/register') ||
+  url.startsWith('/open-finance');
+
+app.use((req, res, next) => {
+  if (!shouldLogRequest(req.originalUrl)) {
+    return next();
+  }
+  const start = Date.now();
+  logInfo(`→ ${req.method} ${req.originalUrl}`, {
+    query: req.query,
+    body: summarizePayload(req.body),
+  });
+  res.on('finish', () => {
+    logInfo(`← ${req.method} ${req.originalUrl}`, {
+      status: res.statusCode,
+      durationMs: Date.now() - start,
+    });
+  });
+  next();
+});
 
 
 // API routes
@@ -99,4 +125,16 @@ app.use(async (req, res, next) => {
 
 // Start server
 const PORT = process.env.PORT || 1411;
-app.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
+app.use((err, req, res, next) => {
+  logError(`Unhandled error on ${req.method} ${req.originalUrl}`, {
+    message: err.message,
+    stack: err.stack,
+  });
+  res
+    .status(err.status || 500)
+    .json({ error: err.message || 'Internal server error' });
+});
+
+app.listen(PORT, () =>
+  logInfo(`Server listening on port ${PORT}`, { port: PORT })
+);

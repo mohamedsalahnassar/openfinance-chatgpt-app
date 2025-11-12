@@ -54,6 +54,8 @@ type BalanceSummary = {
   accounts: AccountBalance[];
 };
 
+type ConsentFlowType = "data" | "sip" | "vrp";
+
 async function apiRequest<T>(
   path: string,
   init: RequestInit = {}
@@ -67,10 +69,28 @@ async function apiRequest<T>(
     headers.set("content-type", "application/json");
   }
 
-  const response = await fetch(url, {
-    ...init,
-    headers,
-  });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...init,
+      headers,
+    });
+  } catch (networkError) {
+    const detail =
+      networkError instanceof Error
+        ? `${networkError.name}: ${networkError.message}`
+        : String(networkError);
+    console.error("[Widget] Network request failed", {
+      url,
+      path,
+      method: init.method ?? "GET",
+      detail,
+    });
+    throw new Error(
+      `Network error calling ${path} at ${API_BASE}: ${detail}. ` +
+        "ChatGPT must be able to reach your Starter Kit server (e.g. via port forwarding or a tunnel)."
+    );
+  }
 
   const raw = await response.text();
   let data: any = null;
@@ -91,7 +111,17 @@ async function apiRequest<T>(
           data?.error ||
           data?.message ||
           response.statusText;
-    throw new Error(reason);
+    console.error("[Widget] API returned an error", {
+      url,
+      path,
+      method: init.method ?? "GET",
+      status: response.status,
+      reason,
+      payload: data,
+    });
+    throw new Error(
+      `HTTP ${response.status} ${response.statusText} on ${path}: ${reason}`
+    );
   }
 
   return data as T;
@@ -131,6 +161,39 @@ const dataPermissionOptions = [
   "ReadParty",
 ];
 
+const consentFlowLabels: Record<ConsentFlowType, string> = {
+  data: "Bank data sharing",
+  sip: "Single instant payment",
+  vrp: "Variable recurring payment",
+};
+
+const consentFlowSummaries: Record<ConsentFlowType, string[]> = {
+  data: [
+    "Share account balances, beneficiaries, transactions, and party data with the TPP.",
+    "Use ISO 8601 timestamps to constrain how long data access remains active.",
+    "Launch a redirect so the PSU can confirm the data sharing scope.",
+  ],
+  sip: [
+    "Collect an authorization for one immediate payment to a predefined beneficiary.",
+    "The amount must be provided in AED with two decimal places (e.g. 125.00).",
+    "Redirect the PSU to confirm and release the payment.",
+  ],
+  vrp: [
+    "Set controls for recurring 'variable on demand' payments for the same beneficiary.",
+    "Use Maximum Individual Amount to cap each pull inside the consent window.",
+    "Share balances scope automatically so you can run funds checks before initiating.",
+  ],
+};
+
+const consentFlowOrder: ConsentFlowType[] = ["data", "sip", "vrp"];
+
+const bankOptions = [
+  "Model Bank (Demo)",
+  "Noor Digital Sandbox",
+  "Al Etihad Test Bank",
+  "Sandbox Credit Union",
+];
+
 const toLocalDateTimeInputValue = (date: Date) => {
   const tzOffsetMs = date.getTimezoneOffset() * 60000;
   const localDate = new Date(date.getTime() - tzOffsetMs);
@@ -161,11 +224,24 @@ export default function App() {
   const [clientToken, setClientToken] = useState<string | null>(null);
   const [clientPayload, setClientPayload] = useState<object | null>(null);
 
-  const [maxPayment, setMaxPayment] = useState("250.00");
-  const [consentStatus, setConsentStatus] = useState<StepStatus>("idle");
-  const [consentPayload, setConsentPayload] = useState<ConsentResponse | null>(
-    null
-  );
+  const [selectedFlow, setSelectedFlow] = useState<ConsentFlowType>("data");
+  const [selectedBank, setSelectedBank] = useState("");
+  const [flowStatus, setFlowStatus] = useState<
+    Record<ConsentFlowType, StepStatus>
+  >({
+    data: "idle",
+    sip: "idle",
+    vrp: "idle",
+  });
+  const [flowPayloads, setFlowPayloads] = useState<
+    Record<ConsentFlowType, ConsentResponse | null>
+  >({
+    data: null,
+    sip: null,
+    vrp: null,
+  });
+  const [singlePaymentAmount, setSinglePaymentAmount] = useState("250.00");
+  const [vrpMaxPayment, setVrpMaxPayment] = useState("250.00");
 
   const [codeInput, setCodeInput] = useState("");
   const [codeVerifierInput, setCodeVerifierInput] = useState("");
@@ -180,10 +256,6 @@ export default function App() {
 
   const [messages, setMessages] = useState<string[]>([]);
 
-  const [dataConsentStatus, setDataConsentStatus] =
-    useState<StepStatus>("idle");
-  const [dataConsentPayload, setDataConsentPayload] =
-    useState<ConsentResponse | null>(null);
   const [dataPermissions, setDataPermissions] = useState<string[]>([
     "ReadAccountsBasic",
     "ReadBalances",
@@ -214,8 +286,17 @@ export default function App() {
     );
   };
 
-  const toIso = (value: string) =>
-    value ? new Date(value).toISOString() : undefined;
+  const isValidCurrencyAmount = (value: string) =>
+    /^(?:0|[1-9]\d*)(\.\d{2})$/.test(value.trim());
+
+  const toIso = (value: string) => {
+    if (!value) return undefined;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return undefined;
+    }
+    return date.toISOString();
+  };
 
   const derivedAccessToken = useMemo(() => {
     if (manualAccessToken.trim()) return manualAccessToken.trim();
@@ -257,55 +338,148 @@ export default function App() {
     }
   };
 
-  const handleConsent = async () => {
-    setConsentStatus("loading");
-    try {
-      const payload = await apiRequest<ConsentResponse>(
-        "/consent-create/variable-on-demand-payments",
-        {
-          method: "POST",
-          body: JSON.stringify({ max_payment_amount: maxPayment }),
-        }
-      );
-      setConsentPayload(payload);
-      setCodeVerifierInput(payload.code_verifier);
-      setConsentStatus("success");
-      recordMessage("Consent created. Launch the redirect link to authorize.");
-    } catch (error) {
-      setConsentStatus("error");
-      recordMessage(`Consent creation failed: ${(error as Error).message}`);
-    }
-  };
+  type PreparedConsentRequest =
+    | {
+        endpoint: string;
+        body: Record<string, unknown>;
+        logContext: Record<string, unknown>;
+      }
+    | { error: string };
 
-  const handleDataSharingConsent = async () => {
-    if (!dataPermissions.length) {
-      recordMessage("Select at least one permission before creating consent.");
-      setDataConsentStatus("error");
-      return;
+  const prepareConsentRequest = (
+    flow: ConsentFlowType
+  ): PreparedConsentRequest => {
+    const bankLabel = selectedBank.trim();
+    if (!bankLabel) {
+      return { error: "Select a bank/provider to continue." };
     }
-    setDataConsentStatus("loading");
-    try {
-      const isoFrom = toIso(dataValidFrom);
-      const isoUntil = toIso(dataValidUntil);
-      const payload = await apiRequest<ConsentResponse>(
-        "/consent-create/bank-data",
-        {
-          method: "POST",
-          body: JSON.stringify({
+    const baseContext = {
+      bank: bankLabel,
+      flow,
+    };
+    switch (flow) {
+      case "data": {
+        if (!dataPermissions.length) {
+          return { error: "Choose at least one data permission." };
+        }
+        const isoFrom = toIso(dataValidFrom);
+        const isoUntil = toIso(dataValidUntil);
+        if (dataValidFrom && !isoFrom) {
+          return { error: "Provide a valid start date/time." };
+        }
+        if (dataValidUntil && !isoUntil) {
+          return { error: "Provide a valid end date/time." };
+        }
+        if (isoFrom && isoUntil && isoFrom >= isoUntil) {
+          return {
+            error: "`Valid until` must be later than `Valid from`.",
+          };
+        }
+        return {
+          endpoint: "/consent-create/bank-data",
+          body: {
+            bank_label: bankLabel,
             data_permissions: dataPermissions,
             ...(isoFrom && { valid_from: isoFrom }),
             ...(isoUntil && { valid_until: isoUntil }),
-          }),
+          },
+          logContext: {
+            ...baseContext,
+            valid_from: isoFrom ?? null,
+            valid_until: isoUntil ?? null,
+            permissions: dataPermissions,
+          },
+        };
+      }
+      case "sip": {
+        const amount = singlePaymentAmount.trim();
+        if (!isValidCurrencyAmount(amount)) {
+          return {
+            error:
+              "Payment amount must be a positive AED value with two decimals.",
+          };
         }
+        return {
+          endpoint: "/consent-create/single-payment",
+          body: { payment_amount: amount, bank_label: bankLabel },
+          logContext: {
+            ...baseContext,
+            payment_amount: amount,
+          },
+        };
+      }
+      case "vrp": {
+        const amount = vrpMaxPayment.trim();
+        if (!isValidCurrencyAmount(amount)) {
+          return {
+            error:
+              "Maximum individual amount must be a positive AED value with two decimals.",
+          };
+        }
+        return {
+          endpoint: "/consent-create/variable-on-demand-payments",
+          body: { max_payment_amount: amount, bank_label: bankLabel },
+          logContext: {
+            ...baseContext,
+            max_payment_amount: amount,
+          },
+        };
+      }
+      default:
+        return { error: "Unsupported flow." };
+    }
+  };
+
+  const handleConsentFlow = async (flow: ConsentFlowType) => {
+    const flowLabel = consentFlowLabels[flow];
+    const prepared = prepareConsentRequest(flow);
+    if ("error" in prepared) {
+      setFlowStatus((prev) => ({ ...prev, [flow]: "error" }));
+      recordMessage(`${flowLabel} consent blocked: ${prepared.error}`);
+      console.warn(
+        `[Widget] ${flowLabel} consent validation failed`,
+        prepared.error
       );
-      setDataConsentPayload(payload);
+      return;
+    }
+
+    setFlowStatus((prev) => ({ ...prev, [flow]: "loading" }));
+    setFlowPayloads((prev) => ({ ...prev, [flow]: null }));
+
+    const { endpoint, body, logContext } = prepared;
+    const bankFromContext = (logContext as { bank?: string }).bank;
+    const bankLabel =
+      bankFromContext && bankFromContext.trim().length
+        ? bankFromContext
+        : "the selected bank";
+
+    try {
+      console.info(
+        `[Widget] Starting ${flowLabel} consent request`,
+        logContext
+      );
+      const payload = await apiRequest<ConsentResponse>(endpoint, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      setFlowPayloads((prev) => ({ ...prev, [flow]: payload }));
       setCodeVerifierInput(payload.code_verifier);
-      setDataConsentStatus("success");
-      recordMessage("Data sharing consent created.");
-    } catch (error) {
-      setDataConsentStatus("error");
+      setFlowStatus((prev) => ({ ...prev, [flow]: "success" }));
       recordMessage(
-        `Data sharing consent failed: ${(error as Error).message}`
+        `${flowLabel} consent created for ${bankLabel}. Launch the redirect link to authorize.`
+      );
+      console.info(
+        `[Widget] ${flowLabel} consent created`,
+        JSON.stringify(payload)
+      );
+    } catch (error) {
+      const message = (error as Error).message;
+      setFlowStatus((prev) => ({ ...prev, [flow]: "error" }));
+      recordMessage(`${flowLabel} consent failed for ${bankLabel}: ${message}`);
+      console.error(
+        `[Widget] ${flowLabel} consent failed`,
+        message,
+        logContext
       );
     }
   };
@@ -503,137 +677,187 @@ export default function App() {
           )}
         </article>
 
-        <article className="panel">
+        <article className="panel consent-panel">
           <div className="panel-head">
             <div>
-              <h2>3A. Create payment consent + redirect</h2>
-              <p>Generate a consent record and PKCE verifier.</p>
-            </div>
-            <StatusBadge status={consentStatus} />
-          </div>
-          <label className="field">
-            <span>Maximum per payment (AED)</span>
-            <input
-              value={maxPayment}
-              onChange={(event) => setMaxPayment(event.target.value)}
-              placeholder="250.00"
-            />
-          </label>
-          <div className="actions">
-            <button
-              className="primary"
-              onClick={handleConsent}
-              disabled={consentStatus === "loading"}
-            >
-              Build consent
-            </button>
-            <button
-              className="ghost"
-              disabled={!consentPayload?.redirect}
-              onClick={() => {
-                if (consentPayload?.redirect) {
-                  window.open(consentPayload.redirect, "_blank");
-                }
-              }}
-            >
-              Open redirect
-            </button>
-          </div>
-          {consentPayload && (
-            <div className="consent-details">
-              <div>
-                <span className="meta-label">Consent</span>
-                <strong>{consentPayload.consent_id}</strong>
-              </div>
-              <div>
-                <span className="meta-label">Code verifier</span>
-                <code>{consentPayload.code_verifier}</code>
-              </div>
-            </div>
-          )}
-        </article>
-
-        <article className="panel">
-          <div className="panel-head">
-            <div>
-              <h2>3B. Create data sharing consent</h2>
+              <h2>3. Configure consent flows</h2>
               <p>
-                Select data scopes and a validity window for account access
-                sharing.
+                Mirror the starter-kit UI: pick a flow, select a bank, review
+                the steps, and launch the redirect.
               </p>
             </div>
-            <StatusBadge status={dataConsentStatus} />
+            <StatusBadge status={flowStatus[selectedFlow]} />
           </div>
-          <div className="permission-grid">
-            {dataPermissionOptions.map((permission) => {
-              const selected = dataPermissions.includes(permission);
-              return (
-                <label
-                  key={permission}
-                  className={clsx(
-                    "permission-chip",
-                    selected && "permission-chip-selected"
-                  )}
-                >
-                  <input
-                    type="checkbox"
-                    checked={selected}
-                    onChange={() => toggleDataPermission(permission)}
-                  />
-                  <span>{permission}</span>
-                </label>
-              );
-            })}
+
+          <div className="flow-selector">
+            {consentFlowOrder.map((flow) => (
+              <button
+                type="button"
+                key={flow}
+                className={clsx(
+                  "flow-chip",
+                  selectedFlow === flow && "flow-chip-active"
+                )}
+                onClick={() => setSelectedFlow(flow)}
+              >
+                <span className="flow-chip-label">
+                  {consentFlowLabels[flow]}
+                </span>
+                <span className="flow-chip-status">
+                  {statusLabel[flowStatus[flow]]}
+                </span>
+              </button>
+            ))}
           </div>
-          <div className="field-grid">
+
+          <div className="flow-fields">
             <label className="field">
-              <span>Valid from</span>
-              <input
-                type="datetime-local"
-                value={dataValidFrom}
-                onChange={(event) => setDataValidFrom(event.target.value)}
-              />
+              <span>Bank or provider</span>
+              <select
+                value={selectedBank}
+                onChange={(event) => setSelectedBank(event.target.value)}
+              >
+                <option value="">Select one</option>
+                {bankOptions.map((bank) => (
+                  <option key={bank} value={bank}>
+                    {bank}
+                  </option>
+                ))}
+              </select>
             </label>
-            <label className="field">
-              <span>Valid until</span>
-              <input
-                type="datetime-local"
-                value={dataValidUntil}
-                onChange={(event) => setDataValidUntil(event.target.value)}
-              />
-            </label>
-          </div>
-          <div className="actions">
-            <button
-              className="primary"
-              onClick={handleDataSharingConsent}
-              disabled={dataConsentStatus === "loading"}
-            >
-              Create data consent
-            </button>
-            <button
-              className="ghost"
-              disabled={!dataConsentPayload?.redirect}
-              onClick={() => {
-                if (dataConsentPayload?.redirect) {
-                  window.open(dataConsentPayload.redirect, "_blank");
-                }
-              }}
-            >
-              Open redirect
-            </button>
-          </div>
-          {dataConsentPayload && (
-            <div className="consent-details">
-              <div>
-                <span className="meta-label">Consent</span>
-                <strong>{dataConsentPayload.consent_id}</strong>
-              </div>
-              <div>
-                <span className="meta-label">Code verifier</span>
-                <code>{dataConsentPayload.code_verifier}</code>
-              </div>
+
+            <div className="flow-overview">
+              <span className="meta-label">What this flow covers</span>
+              <ul>
+                {consentFlowSummaries[selectedFlow].map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
             </div>
+
+            {selectedFlow === "data" && (
+              <>
+                <p className="lede">
+                  Toggle the same permission chips exposed in the hackathon
+                  starter kit.
+                </p>
+                <div className="permission-grid">
+                  {dataPermissionOptions.map((permission) => {
+                    const selected = dataPermissions.includes(permission);
+                    return (
+                      <label
+                        key={permission}
+                        className={clsx(
+                          "permission-chip",
+                          selected && "permission-chip-selected"
+                        )}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={() => toggleDataPermission(permission)}
+                        />
+                        <span>{permission}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                <div className="field-grid">
+                  <label className="field">
+                    <span>Valid from (optional)</span>
+                    <input
+                      type="datetime-local"
+                      value={dataValidFrom}
+                      onChange={(event) => setDataValidFrom(event.target.value)}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Valid until (optional)</span>
+                    <input
+                      type="datetime-local"
+                      value={dataValidUntil}
+                      onChange={(event) =>
+                        setDataValidUntil(event.target.value)
+                      }
+                    />
+                  </label>
+                </div>
+              </>
+            )}
+
+            {selectedFlow === "sip" && (
+              <div className="field">
+                <span>Payment amount (AED)</span>
+                <input
+                  value={singlePaymentAmount}
+                  onChange={(event) =>
+                    setSinglePaymentAmount(event.target.value)
+                  }
+                  placeholder="125.00"
+                />
+                <p className="info-text">
+                  Uses the starter-kit beneficiary, reference, and control
+                  parameters for the Single Instant Payment journey.
+                </p>
+              </div>
+            )}
+
+            {selectedFlow === "vrp" && (
+              <div className="field">
+                <span>Maximum individual amount (AED)</span>
+                <input
+                  value={vrpMaxPayment}
+                  onChange={(event) => setVrpMaxPayment(event.target.value)}
+                  placeholder="250.00"
+                />
+                <p className="info-text">
+                  Sets the Variable On Demand control parameter to mirror the
+                  original VRP screen.
+                </p>
+              </div>
+            )}
+          </div>
+
+          <div className="flow-steps">
+            <div>
+              <span className="meta-label">Flow checklist</span>
+              <ol>
+                <li>Select the consent type and bank.</li>
+                <li>Confirm the inputs match the starter-kit screen.</li>
+                <li>Launch the consent and follow the redirect.</li>
+              </ol>
+            </div>
+            <div className="flow-status-list">
+              {consentFlowOrder.map((flow) => (
+                <div key={flow} className="flow-status-row">
+                  <span>{consentFlowLabels[flow]}</span>
+                  <StatusBadge status={flowStatus[flow]} />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <button
+            className="primary"
+            onClick={() => handleConsentFlow(selectedFlow)}
+            disabled={flowStatus[selectedFlow] === "loading"}
+          >
+            Launch {consentFlowLabels[selectedFlow]} consent
+          </button>
+
+          {flowPayloads[selectedFlow] && (
+            <>
+              {flowPayloads[selectedFlow]?.redirect && (
+                <p className="info-text">
+                  Redirect ready for{" "}
+                  <strong>{selectedBank || "the selected bank"}</strong>:{" "}
+                  <code>{flowPayloads[selectedFlow]?.redirect}</code>
+                </p>
+              )}
+              <pre className="payload">
+                {JSON.stringify(flowPayloads[selectedFlow], null, 2)}
+              </pre>
+            </>
           )}
         </article>
 
