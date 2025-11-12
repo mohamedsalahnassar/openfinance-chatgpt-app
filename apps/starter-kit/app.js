@@ -33,6 +33,15 @@ import authDebug from './api/routes/authDebug.js'
 
 
 
+const starterKitPort =
+  Number.parseInt(
+    process.env.STARTER_KIT_PORT ?? process.env.PORT ?? "1411",
+    10
+  ) || 1411;
+const mcpPortForProxy = process.env.MCP_PORT ?? "9035";
+const MCP_TARGET =
+  process.env.MCP_SERVER_URL || `http://localhost:${mcpPortForProxy}`;
+
 const app = express();
 app.use(express.json());
 app.use(cors());
@@ -74,7 +83,6 @@ app.use('/open-finance/product/v1.2', productsAndLeads);
 app.use('/open-finance/confirmation-of-payee/v1.2', confirmationOfPayee);
 app.use('', authDebug);
 
-const MCP_TARGET = process.env.MCP_SERVER_URL || 'http://localhost:9035';
 app.use(
   ['/mcp', '/mcp/messages', '/widgets', '/assets'],
   createProxyMiddleware({
@@ -124,7 +132,7 @@ app.use(async (req, res, next) => {
 });
 
 // Start server
-const PORT = process.env.PORT || 1411;
+const PORT = starterKitPort;
 app.use((err, req, res, next) => {
   logError(`Unhandled error on ${req.method} ${req.originalUrl}`, {
     message: err.message,
@@ -136,5 +144,8 @@ app.use((err, req, res, next) => {
 });
 
 app.listen(PORT, () =>
-  logInfo(`Server listening on port ${PORT}`, { port: PORT })
+  logInfo(`Starter kit listening`, {
+    port: PORT,
+    proxyingMcpTarget: MCP_TARGET,
+  })
 );

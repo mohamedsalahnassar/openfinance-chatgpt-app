@@ -38,8 +38,12 @@ const assetsRoot = path.resolve(projectRoot, "assets/openfinance-consent-flow");
 const assetBundleDir = path.join(assetsRoot, "assets");
 
 const port = Number.parseInt(process.env.MCP_PORT ?? "9035", 10);
+const starterKitPort = Number.parseInt(
+  process.env.STARTER_KIT_PORT ?? process.env.PORT ?? "1411",
+  10
+);
 const starterKitBase = (process.env.STARTER_KIT_BASE_URL ??
-  "http://localhost:1411") as string;
+  `http://localhost:${starterKitPort}`) as string;
 const normalizedStarterKitBase = starterKitBase.replace(/\/+$/, "");
 const publicBase = (process.env.PUBLIC_BASE_URL ??
   `http://localhost:${port}`) as string;
