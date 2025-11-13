@@ -1,3 +1,4 @@
+import "../../../loadEnv.js";
 import { createServer, } from "node:http";
 import { createReadStream, existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -59,12 +60,13 @@ function loadWidgetAssets() {
     };
 }
 const widgetAssets = loadWidgetAssets();
-function buildWidgetHtml(variant) {
+function buildWidgetHtml(variant, apiBaseOverride) {
+    const apiBase = apiBaseOverride ?? normalizedStarterKitBase;
     return `
 <div id="root"></div>
 <style>${widgetAssets.cssText}</style>
 <script>
-window.__OPENFINANCE_API_BASE__ = ${JSON.stringify(normalizedStarterKitBase)};
+window.__OPENFINANCE_API_BASE__ = ${JSON.stringify(apiBase)};
 window.__OPENFINANCE_WIDGET_VARIANT__ = ${JSON.stringify(variant ?? "orchestrator")};
 </script>
 <script type="module">
@@ -79,7 +81,7 @@ const consentWidget = {
     templateUri: `ui://widget/openfinance/consent-flow?rev=${widgetAssets.revision}`,
     invoking: "Preparing consent orchestrator",
     invoked: "Consent orchestrator ready",
-    html: buildWidgetHtml("consent-orchestrator"),
+    html: buildWidgetHtml("consent-orchestrator"), // Fallback for static contexts
 };
 const dataWizardWidget = {
     id: "openfinance-data-wizard",
@@ -88,9 +90,18 @@ const dataWizardWidget = {
     templateUri: `ui://widget/openfinance/data-wizard?rev=${widgetAssets.revision}`,
     invoking: "Preparing data wizard",
     invoked: "Data wizard ready",
-    html: buildWidgetHtml("data-wizard"),
+    html: buildWidgetHtml("data-wizard"), // Fallback for static contexts
 };
-const widgets = [consentWidget, dataWizardWidget];
+const paymentWidget = {
+    id: "openfinance-payment-wizard",
+    title: "Open Finance Payment",
+    description: "User-friendly payment flow that guides through amount entry, consent creation, bank authentication, and payment initiation with automatic data pre-filling.",
+    templateUri: `ui://widget/openfinance/payment?rev=${widgetAssets.revision}`,
+    invoking: "Preparing payment wizard",
+    invoked: "Payment wizard ready",
+    html: buildWidgetHtml("payment"), // Fallback for static contexts
+};
+const widgets = [consentWidget, dataWizardWidget, paymentWidget];
 const widgetsByUri = new Map(widgets.map((widget) => [widget.templateUri, widget]));
 function widgetDescriptorMeta(widget) {
     return {
@@ -240,6 +251,30 @@ const tools = [
             _meta: widgetInvocationMeta(dataWizardWidget),
         }),
     }),
+    registerTool({
+        spec: {
+            name: "openfinance.launchPaymentFlow",
+            title: "Launch payment wizard",
+            description: "Opens an intuitive payment flow for single instant payments through the AlTareq Model Bank. User enters payment amount, authorizes through the bank, and completes the payment with automatic data pre-filling between steps.",
+            inputSchema: {
+                type: "object",
+                properties: {},
+                additionalProperties: false,
+            },
+            _meta: widgetDescriptorMeta(paymentWidget),
+        },
+        schema: z.object({}).passthrough(),
+        invoke: async () => ({
+            content: [
+                {
+                    type: "text",
+                    text: "Payment wizard ready. Let's initiate your Open Finance payment step by step.",
+                },
+            ],
+            structuredContent: {},
+            _meta: widgetInvocationMeta(paymentWidget),
+        }),
+    }),
 ];
 function createMcpServer() {
     const server = new Server({
@@ -350,11 +385,34 @@ function contentTypeFor(filePath) {
             return "application/octet-stream";
     }
 }
-function serveInlinedWidget(res, variant) {
-    const widget = variant === "data-wizard" ? dataWizardWidget : consentWidget;
+function serveInlinedWidget(res, req, variant) {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.writeHead(200).end(widget.html);
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    // Dynamically inject the correct API base URL based on the request host
+    let apiBaseUrl = normalizedStarterKitBase;
+    // Check X-Forwarded-Host first (set by proxy), then fall back to Host header
+    const forwardedHost = req.headers["x-forwarded-host"];
+    const host = forwardedHost || req.headers.host;
+    // If accessed via a remote host (not localhost), use that host as the API base
+    if (host && !host.includes("localhost") && !host.includes("127.0.0.1")) {
+        const protocol = req.headers["x-forwarded-proto"] || "https";
+        apiBaseUrl = `${protocol}://${host}`;
+        console.log(`[MCP Server] Serving widget with remote API base: ${apiBaseUrl} (from ${forwardedHost ? 'X-Forwarded-Host' : 'Host'} header)`);
+    }
+    // Build the widget HTML with the dynamic API base
+    // Support multiple widget variants: data-wizard, payment, or default to consent-orchestrator
+    let variantName = "consent-orchestrator";
+    if (variant === "data-wizard") {
+        variantName = "data-wizard";
+    }
+    else if (variant === "payment") {
+        variantName = "payment";
+    }
+    const dynamicHtml = buildWidgetHtml(variantName, apiBaseUrl);
+    res.writeHead(200).end(dynamicHtml);
 }
 function serveBundledAsset(pathname, res) {
     const relative = pathname.replace(/^\/assets\/?/, "");
@@ -411,7 +469,7 @@ const httpServer = createServer(async (req, res) => {
         return;
     }
     if (req.method === "GET" && url.pathname.startsWith("/widgets")) {
-        serveInlinedWidget(res, url.searchParams.get("variant"));
+        serveInlinedWidget(res, req, url.searchParams.get("variant"));
         return;
     }
     if (req.method === "GET" && url.pathname.startsWith("/assets/")) {
@@ -432,3 +490,25 @@ httpServer.listen(port, () => {
     console.log(`Widget assets directory: ${assetsRoot}`);
     console.log(`Starter kit base: ${normalizedStarterKitBase}`);
 });
+let shuttingDown = false;
+const shutdown = (signal) => {
+    if (shuttingDown)
+        return;
+    shuttingDown = true;
+    console.log(`[MCP] Received ${signal}, shutting down...`);
+    const timeout = setTimeout(() => {
+        console.error("[MCP] Forced exit after timeout");
+        process.exit(1);
+    }, 5000);
+    timeout.unref();
+    httpServer.close((error) => {
+        if (error) {
+            console.error("[MCP] Error closing server", error);
+            process.exit(1);
+        }
+        clearTimeout(timeout);
+        console.log("[MCP] Server closed.");
+        process.exit(0);
+    });
+};
+["SIGINT", "SIGTERM"].forEach((signal) => process.on(signal, () => shutdown(signal)));

@@ -1,4 +1,5 @@
 // app.js
+import "../../loadEnv.js";
 import express from 'express';
 import cors from 'cors'
 import { createServer as createViteServer } from "vite";
@@ -10,11 +11,11 @@ import { fileURLToPath } from 'url';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 
 import { logInfo, logError, summarizePayload } from './api/logger.js';
+import { recordConsentCallback } from './api/services/consentStore.js';
 
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
 
 // 🔹 Import APIs
 // register
@@ -120,6 +121,125 @@ const file = fs.readFileSync("./api/swagger.yaml", "utf8");
 const swaggerSpec = YAML.parse(file);
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
+const pickFirstString = (value) => {
+  if (Array.isArray(value)) {
+    return value.find((entry) => typeof entry === "string");
+  }
+  return typeof value === "string" ? value : undefined;
+};
+
+const escapeHtml = (value = "") =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+app.get("/client/callback", async (req, res, next) => {
+  const code = pickFirstString(req.query.code);
+  const state = pickFirstString(req.query.state);
+  const err = pickFirstString(req.query.error);
+
+  if (!code && !state && !err) {
+    return next();
+  }
+
+  const normalizedQuery = {};
+  for (const [key, rawValue] of Object.entries(req.query)) {
+    if (Array.isArray(rawValue)) {
+      normalizedQuery[key] = rawValue.join(",");
+    } else if (rawValue !== undefined) {
+      normalizedQuery[key] = rawValue;
+    }
+  }
+
+  let persisted = false;
+  try {
+    await recordConsentCallback({
+      code,
+      state,
+      issuer: pickFirstString(req.query.iss),
+      error: err,
+      errorDescription: pickFirstString(req.query.error_description),
+      query: normalizedQuery,
+    });
+    persisted = true;
+    logInfo("[callback] OAuth redirect captured", {
+      hasCode: Boolean(code),
+      hasState: Boolean(state),
+    });
+  } catch (error) {
+    logError("[callback] Failed to persist OAuth redirect", {
+      message: error.message,
+    });
+  }
+
+  const acceptsJson = req.accepts(["json", "html"]) === "json";
+  const responsePayload = {
+    status: err ? "error" : "ok",
+    persisted,
+    code,
+    state,
+    error: err,
+    issuer: pickFirstString(req.query.iss),
+  };
+
+  if (acceptsJson) {
+    return res.status(err ? 400 : 200).json(responsePayload);
+  }
+
+  const codeBlock = code
+    ? `<p><strong>Code:</strong> <code>${escapeHtml(code)}</code></p>`
+    : "";
+  const errorBlock = err
+    ? `<p><strong>Error:</strong> <code>${escapeHtml(err)}</code></p>`
+    : "";
+  const stateValue = escapeHtml(state ?? "N/A");
+  const issuerValue = escapeHtml(pickFirstString(req.query.iss) ?? "unknown");
+
+  const template = `
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Authorization callback</title>
+    <style>
+      body { font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif; margin: 40px; background: #0b1220; color: #f4f6fb; }
+      .card { max-width: 540px; padding: 32px; border-radius: 18px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); box-shadow: 0 20px 60px rgba(0,0,0,0.4); }
+      .status-ok { color: #4ade80; }
+      .status-error { color: #f87171; }
+      code { font-size: 0.95rem; background: rgba(255,255,255,0.08); padding: 4px 6px; border-radius: 6px; word-break: break-all; }
+      .meta { margin-top: 18px; font-size: 0.9rem; opacity: 0.85; }
+      a { color: #93c5fd; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1 class="${err ? "status-error" : "status-ok"}">
+        ${err ? "Callback received with an error" : "Authorization callback captured"}
+      </h1>
+      <p>
+        You can close this tab and return to your Open Finance session.
+        The authorization response has been ${persisted ? "stored in Supabase." : "processed locally."}
+      </p>
+      ${codeBlock}
+      ${errorBlock}
+      <p><strong>State:</strong> <code>${stateValue}</code></p>
+      <div class="meta">
+        <p>Issuer: <code>${issuerValue}</code></p>
+        <p>Timestamp: ${new Date().toISOString()}</p>
+      </div>
+      <p class="meta">
+        Need to inspect the raw payload? Append <code>Accept: application/json</code> to this request for a JSON response.
+      </p>
+    </div>
+  </body>
+</html>
+  `.trim();
+
+  res.status(err ? 400 : 200).setHeader("Content-Type", "text/html").send(template);
+});
 
 // client
 // Vite middleware setup (dev mode)
@@ -163,9 +283,35 @@ app.use((err, req, res, next) => {
     .json({ error: err.message || 'Internal server error' });
 });
 
-app.listen(PORT, () =>
+const server = app.listen(PORT, () =>
   logInfo(`Starter kit listening`, {
     port: PORT,
     proxyingMcpTarget: MCP_TARGET,
   })
 );
+
+let shuttingDown = false;
+const terminate = (signal) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logInfo(`Starter kit shutting down`, { signal });
+  const timeout = setTimeout(() => {
+    logError(`Force exiting after shutdown timeout`, { signal });
+    process.exit(1);
+  }, 5000);
+  timeout.unref();
+
+  server.close((error) => {
+    if (error) {
+      logError(`Error closing starter kit server`, { message: error.message });
+      process.exit(1);
+    }
+    clearTimeout(timeout);
+    logInfo(`Starter kit server closed`);
+    process.exit(0);
+  });
+};
+
+["SIGINT", "SIGTERM"].forEach((signal) => {
+  process.on(signal, () => terminate(signal));
+});

@@ -1,3 +1,5 @@
+import { recordConsentCreationFromMcp } from "./consentStore.js";
+const asString = (value) => typeof value === "string" ? value : undefined;
 const amountRegex = /^(?:0|[1-9]\d*)(?:\.\d{2})$/;
 export class OpenFinanceClient {
     baseUrl;
@@ -65,16 +67,29 @@ export class OpenFinanceClient {
         if (!amountRegex.test(maxPaymentAmount)) {
             throw new Error("maxPaymentAmount must look like 250.00");
         }
-        return this.request("/consent-create/variable-on-demand-payments", {
+        const result = await this.request("/consent-create/variable-on-demand-payments", {
             method: "POST",
             body: JSON.stringify({ max_payment_amount: maxPaymentAmount }),
         });
+        await recordConsentCreationFromMcp({
+            consentId: asString(result?.["consent_id"]) ?? asString(result?.["consentId"]),
+            consentType: "variable_on_demand_payments",
+            redirectUrl: asString(result?.["redirect"]),
+            codeVerifier: asString(result?.["code_verifier"]) ??
+                asString(result?.["codeVerifier"]),
+            metadata: {
+                max_payment_amount: maxPaymentAmount,
+                base_url: this.baseUrl,
+            },
+            status: "mcp_recorded",
+        });
+        return result;
     }
     async createDataConsent(params) {
         if (!Array.isArray(params.permissions) || params.permissions.length === 0) {
             throw new Error("At least one permission is required for data consent.");
         }
-        return this.request("/consent-create/bank-data", {
+        const result = await this.request("/consent-create/bank-data", {
             method: "POST",
             body: JSON.stringify({
                 data_permissions: params.permissions,
@@ -82,6 +97,21 @@ export class OpenFinanceClient {
                 valid_until: params.validUntil,
             }),
         });
+        await recordConsentCreationFromMcp({
+            consentId: asString(result?.["consent_id"]) ?? asString(result?.["consentId"]),
+            consentType: "bank_data",
+            redirectUrl: asString(result?.["redirect"]),
+            codeVerifier: asString(result?.["code_verifier"]) ??
+                asString(result?.["codeVerifier"]),
+            metadata: {
+                permissions: params.permissions,
+                valid_from: params.validFrom,
+                valid_until: params.validUntil,
+                base_url: this.baseUrl,
+            },
+            status: "mcp_recorded",
+        });
+        return result;
     }
     async exchangeAuthorizationCode(code, codeVerifier) {
         return this.request("/token/authorization-code", {
