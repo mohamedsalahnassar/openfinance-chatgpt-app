@@ -52,24 +52,26 @@ function loadWidgetAssets() {
     const revision = extractAssetRevision(jsFile) ??
         extractAssetRevision(cssFile) ??
         Date.now().toString(36);
-    const widgetHtml = `
-<div id="root"></div>
-<style>${cssText}</style>
-<script>
-window.__OPENFINANCE_API_BASE__ = ${JSON.stringify(normalizedStarterKitBase)};
-</script>
-<script type="module">
-${escapeScriptContents(jsText)}
-</script>
-`.trim();
     return {
-        html: widgetHtml,
         revision,
-        cssFile,
-        jsFile,
+        cssText,
+        jsText,
     };
 }
 const widgetAssets = loadWidgetAssets();
+function buildWidgetHtml(variant) {
+    return `
+<div id="root"></div>
+<style>${widgetAssets.cssText}</style>
+<script>
+window.__OPENFINANCE_API_BASE__ = ${JSON.stringify(normalizedStarterKitBase)};
+window.__OPENFINANCE_WIDGET_VARIANT__ = ${JSON.stringify(variant ?? "orchestrator")};
+</script>
+<script type="module">
+${escapeScriptContents(widgetAssets.jsText)}
+</script>
+`.trim();
+}
 const consentWidget = {
     id: "openfinance-consent-flow",
     title: "Consent + balance orchestrator",
@@ -77,9 +79,18 @@ const consentWidget = {
     templateUri: `ui://widget/openfinance/consent-flow?rev=${widgetAssets.revision}`,
     invoking: "Preparing consent orchestrator",
     invoked: "Consent orchestrator ready",
-    html: widgetAssets.html,
+    html: buildWidgetHtml("consent-orchestrator"),
 };
-const widgets = [consentWidget];
+const dataWizardWidget = {
+    id: "openfinance-data-wizard",
+    title: "Data sharing wizard",
+    description: "Step-by-step experience for bank selection, grouped permissions, consent redirect, and account aggregation.",
+    templateUri: `ui://widget/openfinance/data-wizard?rev=${widgetAssets.revision}`,
+    invoking: "Preparing data wizard",
+    invoked: "Data wizard ready",
+    html: buildWidgetHtml("data-wizard"),
+};
+const widgets = [consentWidget, dataWizardWidget];
 const widgetsByUri = new Map(widgets.map((widget) => [widget.templateUri, widget]));
 function widgetDescriptorMeta(widget) {
     return {
@@ -207,210 +218,27 @@ function registerTool(definition) {
 const tools = [
     registerTool({
         spec: {
-            name: "openfinance.register",
-            title: "Register TPP",
-            description: "Calls the /register endpoint from the starter kit to initiate or refresh your TPP registration.",
+            name: "openfinance.launchDataWizard",
+            title: "Launch data sharing wizard",
+            description: "Returns the multi-step data sharing wizard widget with bank selection, grouped permissions, redirect launch, and account aggregation.",
             inputSchema: {
                 type: "object",
                 properties: {},
                 additionalProperties: false,
             },
-            annotations: {
-                destructiveHint: false,
-                openWorldHint: false,
-                readOnlyHint: true,
-            },
+            _meta: widgetDescriptorMeta(dataWizardWidget),
         },
-        schema: registerSchema,
-        invoke: async () => {
-            const payload = await openFinanceClient.register();
-            return asToolResult("Starter kit registration payload retrieved.", payload);
-        },
-    }),
-    registerTool({
-        spec: {
-            name: "openfinance.clientCredentials",
-            title: "Client credentials token",
-            description: "Exchange client credentials for a scoped access token.",
-            inputSchema: {
-                type: "object",
-                properties: {
-                    scope: {
-                        type: "string",
-                        enum: scopeOptions,
-                        description: "OAuth scope to request.",
-                    },
+        schema: z.object({}).passthrough(),
+        invoke: async () => ({
+            content: [
+                {
+                    type: "text",
+                    text: "Data sharing wizard ready. Walk through the bank + consent steps below.",
                 },
-                required: ["scope"],
-                additionalProperties: false,
-            },
-        },
-        schema: clientCredentialsSchema,
-        invoke: async (raw) => {
-            const args = clientCredentialsSchema.parse(raw);
-            const payload = await openFinanceClient.clientCredentials(args.scope);
-            return asToolResult(`Issued client-credential token for scope "${args.scope}".`, payload);
-        },
-    }),
-    registerTool({
-        spec: {
-            name: "openfinance.createConsent",
-            title: "Create consent",
-            description: "Build a variable-on-demand consent and receive the redirect link + PKCE verifier.",
-            inputSchema: {
-                type: "object",
-                properties: {
-                    maxPaymentAmount: {
-                        type: "string",
-                        description: "Maximum amount per payment in AED (e.g. 250.00).",
-                    },
-                },
-                required: ["maxPaymentAmount"],
-                additionalProperties: false,
-            },
-        },
-        schema: consentSchema,
-        invoke: async (raw) => {
-            const args = consentSchema.parse(raw);
-            const payload = await openFinanceClient.createConsent(args.maxPaymentAmount);
-            return asToolResult("Consent created. Redirect URL and verifier returned.", payload);
-        },
-    }),
-    registerTool({
-        spec: {
-            name: "openfinance.createDataConsent",
-            title: "Create data sharing consent",
-            description: "Build an account-access consent for data aggregation with a custom validity period.",
-            inputSchema: {
-                type: "object",
-                properties: {
-                    permissions: {
-                        type: "array",
-                        description: "List of data permissions requested from the user.",
-                        items: { type: "string", enum: dataPermissionOptions },
-                    },
-                    validFrom: {
-                        type: "string",
-                        description: "ISO 8601 timestamp when the consent becomes active.",
-                    },
-                    validUntil: {
-                        type: "string",
-                        description: "ISO 8601 timestamp when the consent expires. Must be later than validFrom.",
-                    },
-                },
-                required: ["permissions"],
-                additionalProperties: false,
-            },
-        },
-        schema: dataConsentSchema,
-        invoke: async (raw) => {
-            const args = dataConsentSchema.parse(raw);
-            const payload = await openFinanceClient.createDataConsent({
-                permissions: args.permissions,
-                validFrom: args.validFrom,
-                validUntil: args.validUntil,
-            });
-            return asToolResult("Data sharing consent created. Redirect URL ready for authorization.", payload);
-        },
-    }),
-    registerTool({
-        spec: {
-            name: "openfinance.exchangeAuthorizationCode",
-            title: "Exchange authorization code",
-            description: "Call the /token/authorization-code endpoint with a code + verifier to produce an access token.",
-            inputSchema: {
-                type: "object",
-                properties: {
-                    code: {
-                        type: "string",
-                        description: "Authorization code returned by the redirect.",
-                    },
-                    codeVerifier: {
-                        type: "string",
-                        description: "PKCE verifier that was issued during consent.",
-                    },
-                },
-                required: ["code", "codeVerifier"],
-                additionalProperties: false,
-            },
-        },
-        schema: exchangeSchema,
-        invoke: async (raw) => {
-            const args = exchangeSchema.parse(raw);
-            const payload = await openFinanceClient.exchangeAuthorizationCode(args.code, args.codeVerifier);
-            return asToolResult("Authorization code exchanged for account access.", payload);
-        },
-    }),
-    registerTool({
-        spec: {
-            name: "openfinance.aggregateBalances",
-            title: "Aggregate balances",
-            description: "Fetches accounts + balances from the starter kit APIs and returns an aggregated summary.",
-            inputSchema: {
-                type: "object",
-                properties: {
-                    accessToken: {
-                        type: "string",
-                        description: "Access token with accounts scope.",
-                    },
-                },
-                required: ["accessToken"],
-                additionalProperties: false,
-            },
-        },
-        schema: aggregateSchema,
-        invoke: async (raw) => {
-            const args = aggregateSchema.parse(raw);
-            const summary = await openFinanceClient.aggregateBalances(args.accessToken);
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: describeSummary(summary),
-                    },
-                ],
-                structuredContent: summary,
-            };
-        },
-    }),
-    registerTool({
-        spec: {
-            name: "openfinance.launchConsentFlow",
-            title: "Launch guided consent flow",
-            description: "Returns the consent + balance widget so you can run the entire flow inside ChatGPT.",
-            inputSchema: {
-                type: "object",
-                properties: {
-                    scope: {
-                        type: "string",
-                        description: "Optional OAuth scope to prefill inside the widget.",
-                    },
-                    maxPaymentAmount: {
-                        type: "string",
-                        description: "Optional amount to seed the widget with.",
-                    },
-                },
-                additionalProperties: false,
-            },
-            _meta: widgetDescriptorMeta(consentWidget),
-        },
-        schema: widgetSchema,
-        invoke: async (raw) => {
-            const args = widgetSchema.parse(raw ?? {});
-            return {
-                content: [
-                    {
-                        type: "text",
-                        text: "Embedded consent + balance UI ready.",
-                    },
-                ],
-                structuredContent: {
-                    scope: args.scope ?? "openid accounts",
-                    maxPaymentAmount: args.maxPaymentAmount ?? "250.00",
-                },
-                _meta: widgetInvocationMeta(consentWidget),
-            };
-        },
+            ],
+            structuredContent: {},
+            _meta: widgetInvocationMeta(dataWizardWidget),
+        }),
     }),
 ];
 function createMcpServer() {
@@ -522,10 +350,11 @@ function contentTypeFor(filePath) {
             return "application/octet-stream";
     }
 }
-function serveInlinedWidget(res) {
+function serveInlinedWidget(res, variant) {
+    const widget = variant === "data-wizard" ? dataWizardWidget : consentWidget;
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.writeHead(200).end(consentWidget.html);
+    res.writeHead(200).end(widget.html);
 }
 function serveBundledAsset(pathname, res) {
     const relative = pathname.replace(/^\/assets\/?/, "");
@@ -582,7 +411,7 @@ const httpServer = createServer(async (req, res) => {
         return;
     }
     if (req.method === "GET" && url.pathname.startsWith("/widgets")) {
-        serveInlinedWidget(res);
+        serveInlinedWidget(res, url.searchParams.get("variant"));
         return;
     }
     if (req.method === "GET" && url.pathname.startsWith("/assets/")) {
