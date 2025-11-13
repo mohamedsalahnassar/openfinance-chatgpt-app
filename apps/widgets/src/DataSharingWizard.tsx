@@ -12,8 +12,9 @@ type StepStatus = "idle" | "loading" | "success" | "error";
 
 const wizardSteps = [
   { id: 0, label: "Choose bank" },
-  { id: 1, label: "Authorize consent" },
-  { id: 2, label: "Account details" },
+  { id: 1, label: "Review consent" },
+  { id: 2, label: "Redirect" },
+  { id: 3, label: "Account details" },
 ];
 
 const bankOptions = [
@@ -87,6 +88,29 @@ const permissionGroups = [
 
 const defaultPermissionGroups = permissionGroups.map((group) => group.id);
 
+const permissionHighlights = [
+  {
+    title: "Your account details",
+    body:
+      "We need account names, currencies, and identifiers so the experience can tailor insights to you.",
+  },
+  {
+    title: "Regular payments",
+    body:
+      "Scheduled payments, direct debits, and standing orders help us flag upcoming commitments.",
+  },
+  {
+    title: "Account activity",
+    body:
+      "Transactions, beneficiaries, and balances ensure categorization and spending analysis stay accurate.",
+  },
+  {
+    title: "Contact & party info",
+    body:
+      "Basic party information is used to personalize the Raseed experience inside ChatGPT.",
+  },
+];
+
 function useMessages() {
   const [messages, setMessages] = useState<string[]>([]);
   const record = (message: string) => {
@@ -123,6 +147,13 @@ export default function DataSharingWizard() {
     return Array.from(unique);
   }, [selectedGroups]);
 
+  const consentStartDate = useMemo(() => new Date(), []);
+  const consentEndDate = useMemo(() => {
+    const date = new Date();
+    date.setDate(date.getDate() + 90);
+    return date;
+  }, []);
+
   const derivedToken = tokenPayload?.access_token ?? null;
   const advanceTo = (target: number) => {
     setStep((prev) => Math.min(Math.max(target, prev), wizardSteps.length - 1));
@@ -143,16 +174,25 @@ export default function DataSharingWizard() {
       setConsentPayload(payload);
       setConsentStatus("success");
       record("Data sharing consent created. Launch the redirect to authorize.");
+      return payload;
     } catch (error) {
       setConsentStatus("error");
       record(`Consent creation failed: ${(error as Error).message}`);
+      return null;
     }
   };
 
-  const handleOpenRedirect = () => {
-    if (!consentPayload?.redirect) return;
-    window.open(consentPayload.redirect, "_blank", "noopener,noreferrer");
-    record(`Opened redirect${selectedBank ? " for " + selectedBank.name : ""}.`);
+  const handleConfirmConsent = async () => {
+    if (!selectedBank) {
+      record("Select a bank before continuing.");
+      return;
+    }
+    const payload = await handleCreateConsent();
+    if (payload?.redirect) {
+      window.open(payload.redirect, "_blank", "noopener,noreferrer");
+      record(`Opened redirect${selectedBank ? " for " + selectedBank.name : ""}.`);
+      advanceTo(2);
+    }
   };
 
   const handleExchangeCode = async () => {
@@ -179,7 +219,7 @@ export default function DataSharingWizard() {
       setTokenPayload(payload);
       setTokenStatus("success");
       record("Authorization code exchanged for access token.");
-      advanceTo(2);
+      advanceTo(3);
     } catch (error) {
       setTokenStatus("error");
       record(`Authorization code exchange failed: ${(error as Error).message}`);
@@ -270,7 +310,7 @@ export default function DataSharingWizard() {
   };
 
   useEffect(() => {
-    if (step === 2 && derivedToken && accountsStatus === "idle") {
+    if (step === 3 && derivedToken && accountsStatus === "idle") {
       fetchAccounts();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -311,61 +351,74 @@ export default function DataSharingWizard() {
       case 1:
         return (
           <section className="wizard-step">
-            <div className="stage-head">
-              <h2>Authorize the consent</h2>
-              <p>Generate the consent and follow the redirect, then paste the returned code.</p>
-            </div>
-            <div className="wizard-panel">
-              <div className="wizard-panel-head">
-                <div>
-                  <strong>Consent creation</strong>
-                  <p>Raseed requests all necessary scopes for you.</p>
-                </div>
-                <StatusBadge status={consentStatus} />
-              </div>
-              <div className="wizard-panel-actions">
-                <button
-                  className="primary"
-                  onClick={handleCreateConsent}
-                  disabled={consentStatus === "loading"}
-                >
-                  Create consent
-                </button>
-                <button
-                  className="ghost"
-                  onClick={handleOpenRedirect}
-                  disabled={!consentPayload?.redirect}
-                >
-                  Open redirect
-                </button>
-              </div>
-              {consentPayload && (
-                <div className="wizard-panel-meta">
+            <div className="consent-review-grid">
+              <div className="consent-summary">
+                <h3>Connect your account(s)</h3>
+                <p>
+                  For you to use this service <strong>Raseed</strong> needs to
+                  access information from your accounts at{" "}
+                  <strong>{selectedBank?.name ?? "your bank"}</strong>.
+                </p>
+                <p className="consent-small">
+                  This is a demo environment. The data you share is used only to
+                  simulate functionality — nothing is kept longer than 24 hours.
+                </p>
+                <div className="consent-dates">
                   <div>
-                    <span className="meta-label">Consent ID</span>
-                    <strong>{consentPayload.consent_id}</strong>
+                    <span className="meta-label">Start date</span>
+                    <strong>{consentStartDate.toLocaleDateString()}</strong>
                   </div>
                   <div>
-                    <span className="meta-label">Code verifier</span>
-                    <code>{consentPayload.code_verifier}</code>
+                    <span className="meta-label">End date</span>
+                    <strong>{consentEndDate.toLocaleDateString()}</strong>
                   </div>
                 </div>
-              )}
-            </div>
-            <div className="wizard-panel">
-              <div className="wizard-panel-head">
-                <div>
-                  <strong>Authorization code</strong>
-                  <p>Paste the code returned by the bank.</p>
-                </div>
-                <StatusBadge status={tokenStatus} />
               </div>
+              <div className="permission-highlight-grid">
+                {permissionHighlights.map((item) => (
+                  <article key={item.title} className="permission-highlight">
+                    <h4>{item.title}</h4>
+                    <p>{item.body}</p>
+                  </article>
+                ))}
+                <div className="permission-calendar">
+                  <span>We will access your data until {consentEndDate.toLocaleDateString()}.</span>
+                </div>
+              </div>
+            </div>
+            <div className="consent-actions">
+              <button
+                className="primary consent-primary"
+                onClick={handleConfirmConsent}
+                disabled={consentStatus === "loading" || !selectedBank}
+              >
+                Continue to authorize
+              </button>
+              <div className="consent-suptext">
+                Continue to{" "}
+                <strong>{selectedBank?.name ?? "your bank"}</strong> to share
+                your account information under these terms.
+              </div>
+              <StatusBadge status={consentStatus} />
+            </div>
+          </section>
+        );
+      case 2:
+        return (
+          <section className="wizard-step redirect-step">
+            <div className="redirect-overlay">
+              <div className="redirect-spinner" />
+              <p>
+                You'll be redirected to {selectedBank?.name || "your bank"}, don't close this window.
+              </p>
+            </div>
+            <div className="redirect-form">
               <label className="field">
-                <span>Code from redirect</span>
+                <span>Authorization code</span>
                 <input
                   value={authCode}
                   onChange={(event) => setAuthCode(event.target.value)}
-                  placeholder="e.g. 2eb8610d-..."
+                  placeholder="Paste code returned by your bank"
                 />
               </label>
               <button
@@ -373,21 +426,13 @@ export default function DataSharingWizard() {
                 onClick={handleExchangeCode}
                 disabled={tokenStatus === "loading"}
               >
-                Exchange for token
+                Continue
               </button>
-              {tokenPayload?.access_token && (
-                <p className="wizard-info">
-                  Token ready: {" "}
-                  <code>
-                    {tokenPayload.access_token.slice(0, 6)}…
-                    {tokenPayload.access_token.slice(-4)}
-                  </code>
-                </p>
-              )}
+              <StatusBadge status={tokenStatus} />
             </div>
           </section>
         );
-      case 2:
+      case 3:
         return (
           <section className="wizard-step">
             <div className="stage-head">
@@ -410,9 +455,7 @@ export default function DataSharingWizard() {
                 Sync accounts
               </button>
               {!derivedToken && (
-                <p className="wizard-info">
-                  Complete the authorization step to obtain an access token.
-                </p>
+                <p className="wizard-info">Complete the authorization step to obtain an access token.</p>
               )}
               {accountsError && (
                 <p className="wizard-error">Error: {accountsError}</p>
