@@ -123,18 +123,9 @@ export default function DataSharingWizard() {
     return Array.from(unique);
   }, [selectedGroups]);
 
-  const canAdvanceFromBank = Boolean(selectedBank);
-  const canAdvanceFromConsent =
-    consentPayload && tokenPayload && tokenPayload.access_token;
-
   const derivedToken = tokenPayload?.access_token ?? null;
-
-  const nextStep = () => {
-    setStep((prev) => Math.min(prev + 1, wizardSteps.length - 1));
-  };
-
-  const prevStep = () => {
-    setStep((prev) => Math.max(prev - 1, 0));
+  const advanceTo = (target: number) => {
+    setStep((prev) => Math.min(Math.max(target, prev), wizardSteps.length - 1));
   };
 
   const handleCreateConsent = async () => {
@@ -188,6 +179,7 @@ export default function DataSharingWizard() {
       setTokenPayload(payload);
       setTokenStatus("success");
       record("Authorization code exchanged for access token.");
+      advanceTo(2);
     } catch (error) {
       setTokenStatus("error");
       record(`Authorization code exchange failed: ${(error as Error).message}`);
@@ -301,7 +293,12 @@ export default function DataSharingWizard() {
                     "bank-card",
                     selectedBank?.id === bank.id && "bank-card-active"
                   )}
-                  onClick={() => setSelectedBank(bank)}
+                  onClick={() => {
+                    setSelectedBank(bank);
+                    if (step === 0) {
+                      advanceTo(1);
+                    }
+                  }}
                 >
                   <span className="bank-logo">{bank.logo}</span>
                   <div>
@@ -473,27 +470,6 @@ export default function DataSharingWizard() {
       </div>
 
       <div className="wizard-body">{stepContent}</div>
-
-      <div className="wizard-footer">
-        <button className="ghost" onClick={prevStep} disabled={step === 0}>
-          Back
-        </button>
-        <button
-          className="primary"
-          onClick={() => {
-            if (step === 0 && !canAdvanceFromBank) return;
-            if (step === 1 && !canAdvanceFromConsent) return;
-            nextStep();
-          }}
-          disabled={
-            (step === 0 && !canAdvanceFromBank) ||
-            (step === 1 && !canAdvanceFromConsent) ||
-            step === wizardSteps.length - 1
-          }
-        >
-          Continue
-        </button>
-      </div>
 
       <button
         className="log-toggle"
