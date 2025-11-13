@@ -73,6 +73,7 @@ VITE_STARTER_KIT_BASE_URL="https://<your-ngrok>.ngrok-free.app" npm run build:wi
 
 Export any of these before running `npm run dev` if you need non-default ports or are tunneling through `ngrok`.
 
+
 ### Supabase consent log
 
 1. In Supabase → SQL editor, create the consent table:
@@ -103,6 +104,22 @@ create table if not exists public.consent_sessions (
 4. Start the stack with `npm run dev`. The starter kit backend, the MCP server, and the OAuth callback listener will automatically upsert rows into `consent_sessions`.
 
 Every consent initiated via the Vue client or the MCP tools is logged when the redirect is generated, and enriched with the authorization code + issuer information as soon as the user returns to `http://localhost:1411/client/callback` (or whatever tunnel you expose).
+
+### Dedicated localhost callback listener
+
+If your main starter-kit instance is exposed via a tunnel (e.g., `https://<ngrok>`), but the bank sends users back to `http://localhost:1411/client/callback`, run the lightweight listener alongside `npm run dev`:
+
+```bash
+npm run dev:callback
+```
+
+- Listens on `CALLBACK_LISTENER_PORT` (defaults to `1411`)
+- Handles `GET /client/callback?code=...&state=...`
+- Writes redirect metadata to Supabase via the shared consent store helper
+- Returns either JSON (when `Accept: application/json`) or a confirmation HTML page
+
+Keep this service running whenever you need a local callback endpoint in addition to the tunneled starter kit.
+
 
 ### Single ngrok endpoint (matching the OpenAI Apps Directory Kit flow)
 
@@ -142,6 +159,7 @@ Each step persists responses, exposes helpers (open redirect link, copy verifier
 | `npm run dev` | Runs the starter kit (`apps/starter-kit`) and MCP server (`apps/mcp-server`) concurrently. Expose *port 1411* via ngrok to give ChatGPT a single HTTPS endpoint for both REST APIs and the MCP server. |
 | `npm run dev:kit` | Starts only the Express + Vite starter kit. |
 | `npm run dev:mcp` | Starts only the MCP server (watches TypeScript files). |
+| `npm run dev:callback` | Runs the standalone callback listener that always serves `http://localhost:1411/client/callback`. |
 | `npm run build:widgets` | Rebuilds the consent widget assets. |
 
 ## Notes & next steps

@@ -11,6 +11,7 @@
     "dev": "concurrently -n kit,mcp -c blue,magenta \"npm run dev --prefix apps/starter-kit\" \"npm run dev --prefix apps/mcp-server\"",
     "dev:kit": "npm run dev --prefix apps/starter-kit",
     "dev:mcp": "npm run dev --prefix apps/mcp-server",
+    "dev:callback": "node apps/callback-listener/server.js",
     "build:widgets": "npm run build --prefix apps/widgets",
     "test": "echo \"no tests yet\""
   },
