@@ -85,10 +85,9 @@ function escapeScriptContents(source: string): string {
 }
 
 type WidgetAssetState = {
-  html: string;
   revision: string;
-  cssFile: string;
-  jsFile: string;
+  cssText: string;
+  jsText: string;
 };
 
 function loadWidgetAssets(): WidgetAssetState {
@@ -103,28 +102,32 @@ function loadWidgetAssets(): WidgetAssetState {
     extractAssetRevision(cssFile) ??
     Date.now().toString(36);
 
-  const widgetHtml = `
-<div id="root"></div>
-<style>${cssText}</style>
-<script>
-window.__OPENFINANCE_API_BASE__ = ${JSON.stringify(
-    normalizedStarterKitBase
-  )};
-</script>
-<script type="module">
-${escapeScriptContents(jsText)}
-</script>
-`.trim();
-
   return {
-    html: widgetHtml,
     revision,
-    cssFile,
-    jsFile,
+    cssText,
+    jsText,
   };
 }
 
 const widgetAssets = loadWidgetAssets();
+
+function buildWidgetHtml(variant?: string) {
+  return `
+<div id="root"></div>
+<style>${widgetAssets.cssText}</style>
+<script>
+window.__OPENFINANCE_API_BASE__ = ${JSON.stringify(
+    normalizedStarterKitBase
+  )};
+window.__OPENFINANCE_WIDGET_VARIANT__ = ${JSON.stringify(
+    variant ?? "orchestrator"
+  )};
+</script>
+<script type="module">
+${escapeScriptContents(widgetAssets.jsText)}
+</script>
+`.trim();
+}
 
 type WidgetDescriptor = {
   id: string;
@@ -144,9 +147,21 @@ const consentWidget: WidgetDescriptor = {
   templateUri: `ui://widget/openfinance/consent-flow?rev=${widgetAssets.revision}`,
   invoking: "Preparing consent orchestrator",
   invoked: "Consent orchestrator ready",
-  html: widgetAssets.html,
+  html: buildWidgetHtml("consent-orchestrator"),
 };
-const widgets = [consentWidget];
+
+const dataWizardWidget: WidgetDescriptor = {
+  id: "openfinance-data-wizard",
+  title: "Data sharing wizard",
+  description:
+    "Step-by-step experience for bank selection, grouped permissions, consent redirect, and account aggregation.",
+  templateUri: `ui://widget/openfinance/data-wizard?rev=${widgetAssets.revision}`,
+  invoking: "Preparing data wizard",
+  invoked: "Data wizard ready",
+  html: buildWidgetHtml("data-wizard"),
+};
+
+const widgets = [consentWidget, dataWizardWidget];
 const widgetsByUri = new Map(widgets.map((widget) => [widget.templateUri, widget]));
 
 function widgetDescriptorMeta(widget: WidgetDescriptor) {

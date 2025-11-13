@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import DataSharingWizard from "./DataSharingWizard";
 import "./styles.css";
 
 const DEBUG_CONTAINER_ID = "openfinance-widget-debug";
@@ -53,9 +54,13 @@ function attachGlobalDebugHandlers() {
 attachGlobalDebugHandlers();
 
 try {
+  const variant = window.__OPENFINANCE_WIDGET_VARIANT__ ?? "orchestrator";
+  const RootComponent =
+    variant === "data-wizard" ? DataSharingWizard : App;
+
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <React.StrictMode>
-      <App />
+      <RootComponent />
     </React.StrictMode>
   );
 } catch (error) {
