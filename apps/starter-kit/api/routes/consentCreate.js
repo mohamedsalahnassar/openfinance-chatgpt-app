@@ -5,6 +5,7 @@ import { JWTSign, CreateClientAssertion, encryptPII } from '../services/JWTCreat
 import CryptoJS from 'crypto-js';
 import { v4 as uuidv4 } from 'uuid';
 import { logInfo, logError, logDebug, summarizePayload } from '../logger.js';
+import { recordConsentCreation } from '../services/consentStore.js';
 
 const router = Router();
 
@@ -208,6 +209,17 @@ router.post('/single-payment', async (req, res) => {
             consentId,
             redirect: redirectLink,
             bank: bankLabel,
+        });
+        await recordConsentCreation({
+            consentId,
+            consentType: 'single_payment',
+            redirectUrl: redirectLink,
+            codeVerifier,
+            bankLabel,
+            metadata: {
+                payment_amount,
+                authorization_details: authorizationDetails.length,
+            },
         });
         res.status(response.status).json({ redirect: redirectLink, consent_id: consentId, code_verifier: codeVerifier });
 
@@ -442,6 +454,17 @@ router.post('/variable-on-demand-payments', async (req, res) => {
             redirect: redirectLink,
             bank: bankLabel,
         });
+        await recordConsentCreation({
+            consentId,
+            consentType: 'variable_on_demand_payments',
+            redirectUrl: redirectLink,
+            codeVerifier,
+            bankLabel,
+            metadata: {
+                max_payment_amount,
+                period_start: periodStart,
+            },
+        });
         res.status(response.status).json({ redirect: redirectLink, consent_id: consentId, code_verifier: codeVerifier });
 
     } catch (error) {
@@ -647,6 +670,18 @@ router.post('/bank-data', async (req, res) => {
             consentId,
             redirect: redirectLink,
             bank: bankLabel,
+        });
+        await recordConsentCreation({
+            consentId,
+            consentType: 'bank_data',
+            redirectUrl: redirectLink,
+            codeVerifier,
+            bankLabel,
+            metadata: {
+                permissions: data_permissions,
+                valid_from: parsedValidFrom,
+                valid_until: parsedValidUntil,
+            },
         });
         res.status(response.status).json({ redirect: redirectLink, consent_id: consentId, code_verifier: codeVerifier });
 

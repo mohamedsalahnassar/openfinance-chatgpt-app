@@ -1,3 +1,4 @@
+import "../../../loadEnv.js";
 import {
   createServer,
   type IncomingMessage,
@@ -653,3 +654,29 @@ httpServer.listen(port, () => {
   console.log(`Widget assets directory: ${assetsRoot}`);
   console.log(`Starter kit base: ${normalizedStarterKitBase}`);
 });
+
+let shuttingDown = false;
+const shutdown = (signal: string) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[MCP] Received ${signal}, shutting down...`);
+  const timeout = setTimeout(() => {
+    console.error("[MCP] Forced exit after timeout");
+    process.exit(1);
+  }, 5000);
+  timeout.unref();
+
+  httpServer.close((error) => {
+    if (error) {
+      console.error("[MCP] Error closing server", error);
+      process.exit(1);
+    }
+    clearTimeout(timeout);
+    console.log("[MCP] Server closed.");
+    process.exit(0);
+  });
+};
+
+["SIGINT", "SIGTERM"].forEach((signal) =>
+  process.on(signal, () => shutdown(signal))
+);

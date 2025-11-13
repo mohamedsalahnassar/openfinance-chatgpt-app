@@ -22,20 +22,28 @@ openfinance-chatgpt-app/
 
 ## Getting started
 
-1. **Install dependencies** (installs all workspaces):
+1. **Copy the env template**:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+   Update the values to match your tunnel (or localhost) and Supabase project. The repo currently ships with `.env` pre-populated for the provided ngrok + Supabase credentials—override them before sharing or committing elsewhere.
+
+2. **Install dependencies** (installs all workspaces):
 
    ```bash
    cd openfinance-chatgpt-app
    npm install
    ```
 
-2. **Build the widget bundle** (run whenever you edit `apps/widgets`):
+3. **Build the widget bundle** (run whenever you edit `apps/widgets`):
 
    ```bash
    npm run build:widgets
    ```
 
-3. **Run everything with a single command** – this starts the Express API (with the Vue client mounted under `/client`) and the MCP + widget asset server:
+4. **Run everything with a single command** – this starts the Express API (with the Vue client mounted under `/client`) and the MCP + widget asset server. All runtime configuration now comes from `.env`, so you can just do:
 
    ```bash
    npm run dev
@@ -53,6 +61,9 @@ openfinance-chatgpt-app/
 | `STARTER_KIT_BASE_URL` | `http://localhost:1411` | URL the MCP server embeds inside the widget for API calls |
 | `PUBLIC_BASE_URL` | `http://localhost:${MCP_PORT}` | Public base used for MCP logs & absolute URLs |
 | `MCP_SERVER_URL` | `http://localhost:9035` | Target that the Express server proxies `/mcp`, `/widgets`, and `/assets` requests to (set this when the MCP server runs on a different host/port) |
+| `SUPABASE_URL` | — | Supabase project URL used by the starter kit + MCP server when persisting consents |
+| `SUPABASE_SERVICE_ROLE_KEY` | — | Service-role key for inserts/updates (falls back to `SUPABASE_KEY` if only the anon key is available) |
+| `SUPABASE_CONSENTS_TABLE` | `consent_sessions` | Table name for consent + callback snapshots |
 
 > **Widget build target:** the React widget now follows the [OpenAI Apps Directory Kit](../OpenAI-Apps-Directory-Kit) pattern. `npm run build:widgets` outputs hashed bundles to `assets/openfinance-consent-flow/` and the MCP server inlines the CSS/JS when it responds to ChatGPT. To hit a hosted backend instead of `localhost`, pass `VITE_STARTER_KIT_BASE_URL` at build time:
 
@@ -61,6 +72,37 @@ VITE_STARTER_KIT_BASE_URL="https://<your-ngrok>.ngrok-free.app" npm run build:wi
 ```
 
 Export any of these before running `npm run dev` if you need non-default ports or are tunneling through `ngrok`.
+
+### Supabase consent log
+
+1. In Supabase → SQL editor, create the consent table:
+
+```sql
+create table if not exists public.consent_sessions (
+  consent_id text primary key,
+  consent_type text,
+  bank_label text,
+  redirect_url text,
+  code_verifier text,
+  status text,
+  source text,
+  metadata jsonb,
+  auth_code text,
+  issuer text,
+  state_payload jsonb,
+  callback_query jsonb,
+  callback_error jsonb,
+  callback_received_at timestamptz,
+  created_at timestamptz default timezone('utc', now()),
+  updated_at timestamptz default timezone('utc', now())
+);
+```
+
+2. (Optional) Add a trigger to keep `updated_at` in sync, or manage it manually.
+3. In Project Settings → API, copy the **Project URL** and the **service_role** key. Drop them into `.env` as `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`.
+4. Start the stack with `npm run dev`. The starter kit backend, the MCP server, and the OAuth callback listener will automatically upsert rows into `consent_sessions`.
+
+Every consent initiated via the Vue client or the MCP tools is logged when the redirect is generated, and enriched with the authorization code + issuer information as soon as the user returns to `http://localhost:1411/client/callback` (or whatever tunnel you expose).
 
 ### Single ngrok endpoint (matching the OpenAI Apps Directory Kit flow)
 
