@@ -100,7 +100,7 @@ function useMessages() {
 
 export default function DataSharingWizard() {
   const [step, setStep] = useState(0);
-  const [selectedBank, setSelectedBank] = useState(bankOptions[0]);
+  const [selectedBank, setSelectedBank] = useState<(typeof bankOptions)[number] | null>(null);
   const [selectedGroups] = useState<string[]>(defaultPermissionGroups);
   const [consentStatus, setConsentStatus] = useState<StepStatus>("idle");
   const [consentPayload, setConsentPayload] =
@@ -152,7 +152,7 @@ export default function DataSharingWizard() {
   const handleOpenRedirect = () => {
     if (!consentPayload?.redirect) return;
     window.open(consentPayload.redirect, "_blank", "noopener,noreferrer");
-    record(`Opened redirect for ${selectedBank.name}.`);
+    record(`Opened redirect${selectedBank ? " for " + selectedBank.name : ""}.`);
   };
 
   const handleExchangeCode = async () => {
@@ -281,10 +281,10 @@ export default function DataSharingWizard() {
       case 0:
         return (
           <section className="wizard-step">
-            <h2>Select your bank</h2>
-            <p className="wizard-lede">
-              Raseed connects securely to your chosen provider. Pick the bank you want to authorize.
-            </p>
+            <div className="stage-head">
+              <h2>Select your bank</h2>
+              <p>Tap a bank to continue the flow.</p>
+            </div>
             <div className="bank-grid">
               {bankOptions.map((bank) => (
                 <button
@@ -295,9 +295,7 @@ export default function DataSharingWizard() {
                   )}
                   onClick={() => {
                     setSelectedBank(bank);
-                    if (step === 0) {
-                      advanceTo(1);
-                    }
+                    advanceTo(1);
                   }}
                 >
                   <span className="bank-logo">{bank.logo}</span>
@@ -313,15 +311,15 @@ export default function DataSharingWizard() {
       case 1:
         return (
           <section className="wizard-step">
-            <h2>Authorize the consent</h2>
-            <p className="wizard-lede">
-              Raseed automatically requests all required data permissions so you can jump straight into the redirect.
-            </p>
+            <div className="stage-head">
+              <h2>Authorize the consent</h2>
+              <p>Generate the consent and follow the redirect, then paste the returned code.</p>
+            </div>
             <div className="wizard-panel">
               <div className="wizard-panel-head">
                 <div>
                   <strong>Consent creation</strong>
-                  <p>Generate the consent record and PKCE verifier.</p>
+                  <p>Raseed requests all necessary scopes for you.</p>
                 </div>
                 <StatusBadge status={consentStatus} />
               </div>
@@ -358,7 +356,7 @@ export default function DataSharingWizard() {
               <div className="wizard-panel-head">
                 <div>
                   <strong>Authorization code</strong>
-                  <p>Paste the `code` returned by the redirect.</p>
+                  <p>Paste the code returned by the bank.</p>
                 </div>
                 <StatusBadge status={tokenStatus} />
               </div>
@@ -392,11 +390,10 @@ export default function DataSharingWizard() {
       case 2:
         return (
           <section className="wizard-step">
-            <h2>Accounts & balances</h2>
-            <p className="wizard-lede">
-              Pull live balances with the authorized consent. Visualize totals
-              per currency and dive into each account.
-            </p>
+            <div className="stage-head">
+              <h2>Accounts & balances</h2>
+              <p>Sync accounts and visualize balances across currencies.</p>
+            </div>
             <div className="wizard-panel">
               <div className="wizard-panel-head">
                 <div>
@@ -444,22 +441,6 @@ export default function DataSharingWizard() {
     <div className="wizard-shell">
       <div className="raseed-brand">
         <span className="raseed-wordmark">Raseed</span>
-      </div>
-
-      <div className="wizard-progress">
-        {wizardSteps.map((item, index) => (
-          <div
-            key={item.id}
-            className={clsx(
-              "wizard-progress-step",
-              step === index && "wizard-progress-active",
-              step > index && "wizard-progress-complete"
-            )}
-          >
-            <span>{index + 1}</span>
-            <p>{item.label}</p>
-          </div>
-        ))}
       </div>
 
       <div className="wizard-body">{stepContent}</div>
