@@ -79,7 +79,7 @@ router.post('/single-payment', async (req, res) => {
     const expirationConsent = new Date(
         now.getFullYear(),
         now.getMonth(),
-        now.getDate() + 1, // Tomorrow
+        now.getDate(),
         23, 0, 0
     ).toISOString();
 

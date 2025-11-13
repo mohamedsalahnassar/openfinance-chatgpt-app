@@ -7,7 +7,6 @@ import {
   ConsentResponse,
   TokenResponse,
 } from "./lib/apiClient";
-import PaymentWizard from "./PaymentWizard";
 
 type StepStatus = "idle" | "loading" | "success" | "error";
 
@@ -102,17 +101,6 @@ function StatusBadge({ status }: { status: StepStatus }) {
 }
 
 export default function App() {
-  // Detect widget variant from window global
-  const widgetVariant = typeof window !== "undefined" 
-    ? (window as any).__OPENFINANCE_WIDGET_VARIANT__ 
-    : "orchestrator";
-
-  // Route to payment wizard if variant is "payment"
-  if (widgetVariant === "payment") {
-    return <PaymentWizard />;
-  }
-
-  // Otherwise show the orchestrator
   const [registerStatus, setRegisterStatus] = useState<StepStatus>("idle");
   const [registerPayload, setRegisterPayload] = useState<object | null>(null);
 
