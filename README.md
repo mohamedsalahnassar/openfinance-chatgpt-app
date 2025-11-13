@@ -43,7 +43,7 @@ openfinance-chatgpt-app/
    npm run build:widgets
    ```
 
-4. **Run everything with a single command** – this starts the Express API (with the Vue client mounted under `/client`) and the MCP + widget asset server. All runtime configuration now comes from `.env`, so you can just do:
+4. **Run everything with a single command** – this starts the Express API (with the Vue client mounted under `/client`), the MCP + widget asset server, and the dedicated localhost callback listener. All runtime configuration now comes from `.env`, so you can just do:
 
    ```bash
    npm run dev
@@ -51,6 +51,7 @@ openfinance-chatgpt-app/
 
    - Backend + Vite client: http://localhost:1411 (configurable via `PORT`)
    - MCP server + widget assets: http://localhost:9035 (configurable via `MCP_PORT`)
+   - Callback listener: http://localhost:1411/client/callback (always local via `CALLBACK_LISTENER_PORT`)
 
 ## Environment variables
 
@@ -107,7 +108,7 @@ Every consent initiated via the Vue client or the MCP tools is logged when the r
 
 ### Dedicated localhost callback listener
 
-If your main starter-kit instance is exposed via a tunnel (e.g., `https://<ngrok>`), but the bank sends users back to `http://localhost:1411/client/callback`, run the lightweight listener alongside `npm run dev`:
+If your main starter-kit instance is exposed via a tunnel (e.g., `https://<ngrok>`), but the bank sends users back to `http://localhost:1411/client/callback`, the lightweight listener keeps a localhost endpoint alive. It is started automatically when you run `npm run dev`, but you can launch it by itself for debugging:
 
 ```bash
 npm run dev:callback
@@ -118,7 +119,7 @@ npm run dev:callback
 - Writes redirect metadata to Supabase via the shared consent store helper
 - Returns either JSON (when `Accept: application/json`) or a confirmation HTML page
 
-Keep this service running whenever you need a local callback endpoint in addition to the tunneled starter kit.
+Keep this service running whenever you need a local callback endpoint in addition to the tunneled starter kit—`npm run dev` already takes care of it.
 
 
 ### Single ngrok endpoint (matching the OpenAI Apps Directory Kit flow)
@@ -156,10 +157,10 @@ Each step persists responses, exposes helpers (open redirect link, copy verifier
 
 | Command | Description |
 | --- | --- |
-| `npm run dev` | Runs the starter kit (`apps/starter-kit`) and MCP server (`apps/mcp-server`) concurrently. Expose *port 1411* via ngrok to give ChatGPT a single HTTPS endpoint for both REST APIs and the MCP server. |
+| `npm run dev` | Runs the starter kit (`apps/starter-kit`), MCP server (`apps/mcp-server`), and the localhost callback listener together. |
 | `npm run dev:kit` | Starts only the Express + Vite starter kit. |
 | `npm run dev:mcp` | Starts only the MCP server (watches TypeScript files). |
-| `npm run dev:callback` | Runs the standalone callback listener that always serves `http://localhost:1411/client/callback`. |
+| `npm run dev:callback` | Runs only the callback listener that serves `http://localhost:1411/client/callback`. |
 | `npm run build:widgets` | Rebuilds the consent widget assets. |
 
 ## Notes & next steps

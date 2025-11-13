@@ -30,6 +30,7 @@ import paymentInitiation from './api/routes/paymentInitiation.js'
 import productsAndLeads from './api/routes/productsAndLeads.js'
 import confirmationOfPayee from './api/routes/confirmationOfPayee.js'
 import authDebug from './api/routes/authDebug.js'
+import consents from './api/routes/consents.js'
 
 
 
@@ -115,6 +116,7 @@ app.use('/open-finance/payment/v1.2', paymentInitiation);
 app.use('/open-finance/product/v1.2', productsAndLeads);
 app.use('/open-finance/confirmation-of-payee/v1.2', confirmationOfPayee);
 app.use('', authDebug);
+app.use('/consents', consents);
 
 // Swagger UI
 const file = fs.readFileSync("./api/swagger.yaml", "utf8");
@@ -184,6 +186,14 @@ app.get("/client/callback", async (req, res, next) => {
     error: err,
     issuer: pickFirstString(req.query.iss),
   };
+  const shouldAutoClose = !err && Boolean(code);
+  const autoCloseScript = shouldAutoClose
+    ? `<script>
+        setTimeout(() => {
+          try { window.close(); } catch (_) {}
+        }, 5000);
+      </script>`
+    : "";
 
   if (acceptsJson) {
     return res.status(err ? 400 : 200).json(responsePayload);
@@ -233,6 +243,7 @@ app.get("/client/callback", async (req, res, next) => {
       <p class="meta">
         Need to inspect the raw payload? Append <code>Accept: application/json</code> to this request for a JSON response.
       </p>
+      ${autoCloseScript}
     </div>
   </body>
 </html>

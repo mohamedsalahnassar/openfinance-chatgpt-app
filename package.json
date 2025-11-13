@@ -8,7 +8,7 @@
     "apps/mcp-server"
   ],
   "scripts": {
-    "dev": "concurrently -n kit,mcp -c blue,magenta \"npm run dev --prefix apps/starter-kit\" \"npm run dev --prefix apps/mcp-server\"",
+    "dev": "concurrently -n kit,mcp,callback -c blue,magenta,green \"npm run dev --prefix apps/starter-kit\" \"npm run dev --prefix apps/mcp-server\" \"npm run dev:callback\"",
     "dev:kit": "npm run dev --prefix apps/starter-kit",
     "dev:mcp": "npm run dev --prefix apps/mcp-server",
     "dev:callback": "node apps/callback-listener/server.js",

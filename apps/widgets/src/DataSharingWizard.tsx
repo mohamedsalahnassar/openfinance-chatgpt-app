@@ -1,14 +1,20 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
 import {
   apiRequest,
-  API_BASE,
   ConsentResponse,
   TokenResponse,
   BalanceSummary,
 } from "./lib/apiClient";
 
 type StepStatus = "idle" | "loading" | "success" | "error";
+
+type ConsentSnapshot = {
+  consent_id: string;
+  auth_code?: string | null;
+  status?: string | null;
+  updated_at?: string | null;
+};
 
 const wizardSteps = [
   { id: 0, label: "Choose bank" },
@@ -129,7 +135,6 @@ export default function DataSharingWizard() {
   const [consentStatus, setConsentStatus] = useState<StepStatus>("idle");
   const [consentPayload, setConsentPayload] =
     useState<ConsentResponse | null>(null);
-  const [authCode, setAuthCode] = useState("");
   const [tokenStatus, setTokenStatus] = useState<StepStatus>("idle");
   const [tokenPayload, setTokenPayload] = useState<TokenResponse | null>(null);
   const [accountsStatus, setAccountsStatus] = useState<StepStatus>("idle");
@@ -155,9 +160,9 @@ export default function DataSharingWizard() {
   }, []);
 
   const derivedToken = tokenPayload?.access_token ?? null;
-  const advanceTo = (target: number) => {
+  const advanceTo = useCallback((target: number) => {
     setStep((prev) => Math.min(Math.max(target, prev), wizardSteps.length - 1));
-  };
+  }, []);
 
   const handleCreateConsent = async () => {
     setConsentStatus("loading");
@@ -195,36 +200,44 @@ export default function DataSharingWizard() {
     }
   };
 
-  const handleExchangeCode = async () => {
-    if (!consentPayload?.code_verifier) {
-      record("Consent has no PKCE verifier yet. Create consent first.");
-      return;
-    }
-    if (!authCode.trim()) {
-      record("Enter the authorization code before exchanging.");
-      return;
-    }
-    setTokenStatus("loading");
-    try {
-      const payload = await apiRequest<TokenResponse>(
-        "/token/authorization-code",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            code: authCode.trim(),
-            code_verifier: consentPayload.code_verifier,
-          }),
-        }
-      );
-      setTokenPayload(payload);
-      setTokenStatus("success");
-      record("Authorization code exchanged for access token.");
-      advanceTo(3);
-    } catch (error) {
-      setTokenStatus("error");
-      record(`Authorization code exchange failed: ${(error as Error).message}`);
-    }
-  };
+  const exchangeAuthorizationCode = useCallback(
+    async (incomingCode: string, origin: "auto" | "manual" = "auto") => {
+      if (!consentPayload?.code_verifier) {
+        record("Consent has no PKCE verifier yet. Create consent first.");
+        return;
+      }
+      const trimmed = incomingCode?.trim();
+      if (!trimmed) {
+        record("Waiting for the bank to provide an authorization code.");
+        return;
+      }
+      setTokenStatus("loading");
+      try {
+        const payload = await apiRequest<TokenResponse>(
+          "/token/authorization-code",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              code: trimmed,
+              code_verifier: consentPayload.code_verifier,
+            }),
+          }
+        );
+        setTokenPayload(payload);
+        setTokenStatus("success");
+        record(
+          origin === "auto"
+            ? "Authorization code detected automatically. Token issued."
+            : "Authorization code exchanged for access token."
+        );
+        setTimeout(() => advanceTo(3), 1200);
+      } catch (error) {
+        setTokenStatus("error");
+        record(`Authorization code exchange failed: ${(error as Error).message}`);
+      }
+    },
+    [advanceTo, consentPayload?.code_verifier, record]
+  );
 
   const fetchAccounts = async () => {
     if (!derivedToken) {
@@ -308,6 +321,53 @@ export default function DataSharingWizard() {
       record(`Balance aggregation failed: ${message}`);
     }
   };
+
+  useEffect(() => {
+    if (
+      step !== 2 ||
+      !consentPayload?.consent_id ||
+      !consentPayload?.code_verifier ||
+      tokenStatus === "success"
+    ) {
+      return;
+    }
+    let cancelled = false;
+    let inFlight = false;
+
+    const poll = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      try {
+        const response = await apiRequest<{ consent: ConsentSnapshot }>(
+          `/consents/${consentPayload.consent_id}`,
+          {
+            method: "GET",
+          }
+        );
+        const authCodeFromDb = response?.consent?.auth_code;
+        if (authCodeFromDb && !cancelled) {
+          await exchangeAuthorizationCode(authCodeFromDb, "auto");
+        }
+      } catch (error) {
+        console.warn("Consent polling failed", error);
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    poll();
+    const intervalId = window.setInterval(poll, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, [
+    consentPayload?.code_verifier,
+    consentPayload?.consent_id,
+    exchangeAuthorizationCode,
+    step,
+    tokenStatus,
+  ]);
 
   useEffect(() => {
     if (step === 3 && derivedToken && accountsStatus === "idle") {
@@ -412,23 +472,19 @@ export default function DataSharingWizard() {
                 You'll be redirected to {selectedBank?.name || "your bank"}, don't close this window.
               </p>
             </div>
-            <div className="redirect-form">
-              <label className="field">
-                <span>Authorization code</span>
-                <input
-                  value={authCode}
-                  onChange={(event) => setAuthCode(event.target.value)}
-                  placeholder="Paste code returned by your bank"
-                />
-              </label>
-              <button
-                className="primary"
-                onClick={handleExchangeCode}
-                disabled={tokenStatus === "loading"}
-              >
-                Continue
-              </button>
-              <StatusBadge status={tokenStatus} />
+            <div className="redirect-form auto-mode">
+              <StatusBadge status={tokenStatus === "idle" ? "loading" : tokenStatus} />
+              <p className="wizard-info">
+                Waiting for{" "}
+                <strong>{selectedBank?.name || "your bank"}</strong> to finish
+                authentication. We’ll automatically exchange the authorization code
+                once it appears.
+              </p>
+              {tokenStatus === "error" && (
+                <p className="wizard-info error">
+                  Something went wrong while exchanging the authorization code. Refresh the page to retry.
+                </p>
+              )}
             </div>
           </section>
         );

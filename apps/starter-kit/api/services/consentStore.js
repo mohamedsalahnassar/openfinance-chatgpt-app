@@ -207,3 +207,28 @@ export const recordConsentCallback = async ({
     "consent_callback"
   );
 };
+
+export const getConsentSnapshot = async (consentId) => {
+  if (!supabase || !consentId) {
+    return null;
+  }
+  try {
+    const { data, error } = await supabase
+      .from(SUPABASE_CONSENTS_TABLE)
+      .select(
+        "consent_id, auth_code, status, redirect_url, code_verifier, callback_received_at, updated_at, metadata"
+      )
+      .eq("consent_id", consentId)
+      .maybeSingle();
+    if (error) {
+      throw error;
+    }
+    return data;
+  } catch (error) {
+    logError("[consent-store] Failed to fetch consent snapshot", {
+      consentId,
+      message: error.message,
+    });
+    throw error;
+  }
+};
