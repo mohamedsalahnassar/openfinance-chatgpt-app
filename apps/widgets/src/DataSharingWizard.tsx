@@ -443,14 +443,7 @@ export default function DataSharingWizard() {
   return (
     <div className="wizard-shell">
       <div className="raseed-brand">
-        <div>
-          <p className="eyebrow">Raseed</p>
-          <h1>Consent wizard</h1>
-        </div>
-        <div className="raseed-meta">
-          <span className="meta-label">API base</span>
-          <strong>{API_BASE}</strong>
-        </div>
+        <span className="raseed-wordmark">Raseed</span>
       </div>
 
       <div className="wizard-progress">
