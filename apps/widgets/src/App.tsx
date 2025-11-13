@@ -63,6 +63,7 @@ async function apiRequest<T>(
   const url = `${API_BASE}${path}`;
   const headers = new Headers(init.headers);
   headers.set("accept", "application/json");
+  headers.set("ngrok-skip-browser-warning", "true");
   const hasBody =
     typeof init.body !== "undefined" && init.body !== null ? true : false;
   if (hasBody && !headers.has("content-type")) {
@@ -484,6 +485,16 @@ export default function App() {
     }
   };
 
+  const handleOpenFlowRedirect = (flow: ConsentFlowType) => {
+    const url = flowPayloads[flow]?.redirect;
+    if (!url) {
+      recordMessage(`No redirect URL available for ${consentFlowLabels[flow]}.`);
+      return;
+    }
+    window.open(url, "_blank", "noopener,noreferrer");
+    recordMessage(`Opened ${consentFlowLabels[flow]} redirect in a new tab.`);
+  };
+
   const handleExchangeCode = async () => {
     setTokenStatus("loading");
     try {
@@ -512,14 +523,28 @@ export default function App() {
     if (!derivedAccessToken) {
       setBalanceError("No access token available. Complete the consent flow.");
       setBalanceStatus("error");
+      recordMessage(
+        "Balance fetch blocked: no derived access token (complete the consent + token steps)."
+      );
+      console.warn("[Widget] Balance fetch aborted — missing access token", {
+        apiBase: API_BASE,
+      });
       return;
     }
+    console.info("[Widget] Balance fetch triggered", {
+      apiBase: API_BASE,
+      tokenPreview: `${derivedAccessToken.slice(0, 6)}…${derivedAccessToken.slice(-4)}`,
+    });
+    recordMessage("Fetching balances from starter kit APIs…");
     setBalanceError(null);
     setBalanceStatus("loading");
     try {
       const headers = {
         Authorization: `Bearer ${derivedAccessToken}`,
       };
+      console.info("[Widget] Requesting accounts list", {
+        endpoint: "/open-finance/account-information/v1.2/accounts",
+      });
       const accountsData = await apiRequest<any>(
         "/open-finance/account-information/v1.2/accounts",
         {
@@ -540,6 +565,9 @@ export default function App() {
         accounts.map(async (account: any) => {
           const accountId = account?.AccountId ?? account?.account_id;
           if (!accountId) return null;
+          console.info("[Widget] Requesting account balances", {
+            endpoint: `/open-finance/account-information/v1.2/accounts/${accountId}/balances`,
+          });
           const balancePayload = await apiRequest<any>(
             `/open-finance/account-information/v1.2/accounts/${accountId}/balances`,
             {
@@ -843,6 +871,13 @@ export default function App() {
             disabled={flowStatus[selectedFlow] === "loading"}
           >
             Launch {consentFlowLabels[selectedFlow]} consent
+          </button>
+          <button
+            className="ghost"
+            onClick={() => handleOpenFlowRedirect(selectedFlow)}
+            disabled={!flowPayloads[selectedFlow]?.redirect}
+          >
+            Open authorization redirect
           </button>
 
           {flowPayloads[selectedFlow] && (

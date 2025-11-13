@@ -43,8 +43,40 @@ const MCP_TARGET =
   process.env.MCP_SERVER_URL || `http://localhost:${mcpPortForProxy}`;
 
 const app = express();
+
+app.use((req, res, next) => {
+  res.setHeader('ngrok-skip-browser-warning', 'true');
+  next();
+});
+
+app.use(
+  ['/mcp', '/mcp/messages', '/widgets', '/assets'],
+  createProxyMiddleware({
+    target: MCP_TARGET,
+    changeOrigin: true,
+    ws: true,
+    logLevel: 'warn',
+    pathRewrite: (_path, req) => req.originalUrl,
+  })
+);
+
+const corsOptions = {
+  origin: true,
+  credentials: false,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: [
+    "authorization",
+    "content-type",
+    "x-requested-with",
+    "accept",
+    "ngrok-skip-browser-warning",
+  ],
+  maxAge: 600,
+};
+
 app.use(express.json());
-app.use(cors());
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 
 const shouldLogRequest = (url = '') =>
   url.startsWith('/consent-create') ||
@@ -82,18 +114,6 @@ app.use('/open-finance/payment/v1.2', paymentInitiation);
 app.use('/open-finance/product/v1.2', productsAndLeads);
 app.use('/open-finance/confirmation-of-payee/v1.2', confirmationOfPayee);
 app.use('', authDebug);
-
-app.use(
-  ['/mcp', '/mcp/messages', '/widgets', '/assets'],
-  createProxyMiddleware({
-    target: MCP_TARGET,
-    changeOrigin: true,
-    ws: true,
-    logLevel: 'warn',
-  })
-);
-
-
 
 // Swagger UI
 const file = fs.readFileSync("./api/swagger.yaml", "utf8");
