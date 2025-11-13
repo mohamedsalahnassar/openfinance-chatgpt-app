@@ -12,9 +12,8 @@ type StepStatus = "idle" | "loading" | "success" | "error";
 
 const wizardSteps = [
   { id: 0, label: "Choose bank" },
-  { id: 1, label: "Choose permissions" },
-  { id: 2, label: "Authorize consent" },
-  { id: 3, label: "Account details" },
+  { id: 1, label: "Authorize consent" },
+  { id: 2, label: "Account details" },
 ];
 
 const bankOptions = [
@@ -86,7 +85,7 @@ const permissionGroups = [
   },
 ];
 
-const defaultPermissionGroups = ["accounts", "transactions"];
+const defaultPermissionGroups = permissionGroups.map((group) => group.id);
 
 function useMessages() {
   const [messages, setMessages] = useState<string[]>([]);
@@ -102,8 +101,7 @@ function useMessages() {
 export default function DataSharingWizard() {
   const [step, setStep] = useState(0);
   const [selectedBank, setSelectedBank] = useState(bankOptions[0]);
-  const [selectedGroups, setSelectedGroups] =
-    useState<string[]>(defaultPermissionGroups);
+  const [selectedGroups] = useState<string[]>(defaultPermissionGroups);
   const [consentStatus, setConsentStatus] = useState<StepStatus>("idle");
   const [consentPayload, setConsentPayload] =
     useState<ConsentResponse | null>(null);
@@ -114,6 +112,7 @@ export default function DataSharingWizard() {
   const [balances, setBalances] = useState<BalanceSummary | null>(null);
   const [accountsError, setAccountsError] = useState<string | null>(null);
   const { messages, record } = useMessages();
+  const [logOpen, setLogOpen] = useState(false);
 
   const selectedPermissions = useMemo(() => {
     const unique = new Set<string>();
@@ -125,7 +124,6 @@ export default function DataSharingWizard() {
   }, [selectedGroups]);
 
   const canAdvanceFromBank = Boolean(selectedBank);
-  const canAdvanceFromPermissions = selectedPermissions.length > 0;
   const canAdvanceFromConsent =
     consentPayload && tokenPayload && tokenPayload.access_token;
 
@@ -139,19 +137,7 @@ export default function DataSharingWizard() {
     setStep((prev) => Math.max(prev - 1, 0));
   };
 
-  const handleGroupToggle = (groupId: string) => {
-    setSelectedGroups((prev) =>
-      prev.includes(groupId)
-        ? prev.filter((id) => id !== groupId)
-        : [...prev, groupId]
-    );
-  };
-
   const handleCreateConsent = async () => {
-    if (!selectedPermissions.length) {
-      record("Select at least one permission group.");
-      return;
-    }
     setConsentStatus("loading");
     try {
       const payload = await apiRequest<ConsentResponse>(
@@ -292,7 +278,7 @@ export default function DataSharingWizard() {
   };
 
   useEffect(() => {
-    if (step === 3 && derivedToken && accountsStatus === "idle") {
+    if (step === 2 && derivedToken && accountsStatus === "idle") {
       fetchAccounts();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -303,10 +289,9 @@ export default function DataSharingWizard() {
       case 0:
         return (
           <section className="wizard-step">
-            <h2>Choose your bank</h2>
+            <h2>Select your bank</h2>
             <p className="wizard-lede">
-              Select the provider you want to connect. You can switch later at
-              any time.
+              Raseed connects securely to your chosen provider. Pick the bank you want to authorize.
             </p>
             <div className="bank-grid">
               {bankOptions.map((bank) => (
@@ -331,47 +316,15 @@ export default function DataSharingWizard() {
       case 1:
         return (
           <section className="wizard-step">
-            <h2>Choose permissions</h2>
+            <h2>Authorize the consent</h2>
             <p className="wizard-lede">
-              Grouped scopes from the starter kit, with messaging lifted from
-              the consent screens.
-            </p>
-            <div className="permission-card-grid">
-              {permissionGroups.map((group) => (
-                <button
-                  key={group.id}
-                  className={clsx(
-                    "permission-card",
-                    selectedGroups.includes(group.id) && "permission-card-active"
-                  )}
-                  onClick={() => handleGroupToggle(group.id)}
-                >
-                  <div className="permission-card-head">
-                    <span className="permission-dot" />
-                    <strong>{group.label}</strong>
-                  </div>
-                  <p>{group.description}</p>
-                  <span className="permission-meta">
-                    {group.permissions.length} detailed permissions
-                  </span>
-                </button>
-              ))}
-            </div>
-          </section>
-        );
-      case 2:
-        return (
-          <section className="wizard-step">
-            <h2>Redirection & authorization</h2>
-            <p className="wizard-lede">
-              Generate the consent, open the bank redirect, then paste the code
-              returned after approval.
+              Raseed automatically requests all required data permissions so you can jump straight into the redirect.
             </p>
             <div className="wizard-panel">
               <div className="wizard-panel-head">
                 <div>
                   <strong>Consent creation</strong>
-                  <p>Create the consent and PKCE verifier.</p>
+                  <p>Generate the consent record and PKCE verifier.</p>
                 </div>
                 <StatusBadge status={consentStatus} />
               </div>
@@ -429,7 +382,7 @@ export default function DataSharingWizard() {
               </button>
               {tokenPayload?.access_token && (
                 <p className="wizard-info">
-                  Token ready:{" "}
+                  Token ready: {" "}
                   <code>
                     {tokenPayload.access_token.slice(0, 6)}…
                     {tokenPayload.access_token.slice(-4)}
@@ -439,7 +392,7 @@ export default function DataSharingWizard() {
             </div>
           </section>
         );
-      case 3:
+      case 2:
         return (
           <section className="wizard-step">
             <h2>Accounts & balances</h2>
@@ -488,24 +441,20 @@ export default function DataSharingWizard() {
       default:
         return null;
     }
-  })();
+  })();;
 
   return (
     <div className="wizard-shell">
-      <header className="wizard-hero">
+      <div className="raseed-brand">
         <div>
-          <p className="eyebrow">Open Finance Hackathon</p>
-          <h1>Data sharing consent wizard</h1>
-          <p className="lede">
-            Step-by-step journey inspired by the starter kit screens. Perfect
-            for demonstrating the account information flow inside ChatGPT.
-          </p>
+          <p className="eyebrow">Raseed</p>
+          <h1>Consent wizard</h1>
         </div>
-        <div className="wizard-hero-meta">
+        <div className="raseed-meta">
           <span className="meta-label">API base</span>
           <strong>{API_BASE}</strong>
         </div>
-      </header>
+      </div>
 
       <div className="wizard-progress">
         {wizardSteps.map((item, index) => (
@@ -533,14 +482,12 @@ export default function DataSharingWizard() {
           className="primary"
           onClick={() => {
             if (step === 0 && !canAdvanceFromBank) return;
-            if (step === 1 && !canAdvanceFromPermissions) return;
-            if (step === 2 && !canAdvanceFromConsent) return;
+            if (step === 1 && !canAdvanceFromConsent) return;
             nextStep();
           }}
           disabled={
             (step === 0 && !canAdvanceFromBank) ||
-            (step === 1 && !canAdvanceFromPermissions) ||
-            (step === 2 && !canAdvanceFromConsent) ||
+            (step === 1 && !canAdvanceFromConsent) ||
             step === wizardSteps.length - 1
           }
         >
@@ -548,25 +495,34 @@ export default function DataSharingWizard() {
         </button>
       </div>
 
-      <section className="wizard-messages">
-        <div className="panel-head">
-          <div>
-            <h3>Activity log</h3>
-            <p>Everything the wizard has done in this session.</p>
+      <button
+        className="log-toggle"
+        onClick={() => setLogOpen((prev) => !prev)}
+        aria-expanded={logOpen}
+      >
+        Activity log
+      </button>
+      {logOpen && (
+        <section className="wizard-log-panel">
+          <div className="panel-head">
+            <div>
+              <h3>Activity</h3>
+              <p>Raseed actions this session.</p>
+            </div>
           </div>
-        </div>
-        {messages.length === 0 ? (
-          <p className="wizard-info">
-            Walk through the steps to see live activity updates.
-          </p>
-        ) : (
-          <ul className="log">
-            {messages.map((message) => (
-              <li key={message}>{message}</li>
-            ))}
-          </ul>
-        )}
-      </section>
+          {messages.length === 0 ? (
+            <p className="wizard-info">
+              Walk through the steps to see live activity updates.
+            </p>
+          ) : (
+            <ul className="log">
+              {messages.map((message) => (
+                <li key={message}>{message}</li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
     </div>
   );
 }

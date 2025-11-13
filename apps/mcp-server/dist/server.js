@@ -218,9 +218,9 @@ function registerTool(definition) {
 const tools = [
     registerTool({
         spec: {
-            name: "openfinance.launchDataWizard",
-            title: "Launch data sharing wizard",
-            description: "Returns the multi-step data sharing wizard widget with bank selection, grouped permissions, redirect launch, and account aggregation.",
+            name: "openfinance.launchConsentFlow",
+            title: "Launch consent wizard",
+            description: "Opens the new multi-step consent wizard: bank selection, grouped permissions, redirect launch, and balance aggregation.",
             inputSchema: {
                 type: "object",
                 properties: {},
