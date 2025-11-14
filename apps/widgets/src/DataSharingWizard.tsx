@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import clsx from "clsx";
+import { ChevronRight } from "lucide-react";
 import {
   apiRequest,
   ConsentResponse,
@@ -152,6 +153,8 @@ export default function DataSharingWizard() {
   const [transactionsError, setTransactionsError] = useState<string | null>(null);
   const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
   const [accountHolderName, setAccountHolderName] = useState<string | null>(null);
+  const [accountHolderAvatar, setAccountHolderAvatar] = useState<string | null>(null);
+  const [partyStatus, setPartyStatus] = useState<StepStatus>("idle");
   const { messages, record } = useMessages();
   const [logOpen, setLogOpen] = useState(false);
 
@@ -266,6 +269,46 @@ export default function DataSharingWizard() {
     [advanceTo, consentPayload?.code_verifier, record]
   );
 
+  const fetchPartyDetails = useCallback(async () => {
+    if (!derivedToken) return;
+    setPartyStatus("loading");
+    try {
+      const headers = {
+        Authorization: `Bearer ${derivedToken}`,
+      };
+      const partiesPayload = await apiRequest<any>(
+        "/open-finance/account-information/v1.2/parties",
+        {
+          method: "GET",
+          headers,
+        }
+      );
+      const partyName = extractPartyName(partiesPayload);
+      const avatar = extractPartyAvatar(partiesPayload);
+      if (partyName) {
+        setAccountHolderName(partyName);
+      }
+      if (avatar) {
+        setAccountHolderAvatar(avatar);
+      }
+      setPartyStatus("success");
+      record("Party details retrieved from the starter kit API.");
+    } catch (error) {
+      const message = (error as Error).message;
+      setPartyStatus("error");
+      record(`Party lookup failed: ${message}`);
+    }
+  }, [derivedToken, record]);
+
+  useEffect(() => {
+    if (!derivedToken || step < 2) {
+      return;
+    }
+    if (partyStatus === "idle") {
+      fetchPartyDetails();
+    }
+  }, [derivedToken, step, partyStatus, fetchPartyDetails]);
+
   const fetchTransactionsForAccounts = useCallback(
     async (
       accountList: DashboardAccount[],
@@ -341,6 +384,9 @@ export default function DataSharingWizard() {
     setDashboardAccounts([]);
     setTransactionsByAccount({});
     setAccountsStatus("loading");
+    if (partyStatus !== "success") {
+      fetchPartyDetails();
+    }
     try {
       const headers = {
         Authorization: `Bearer ${derivedToken}`,
@@ -445,22 +491,6 @@ export default function DataSharingWizard() {
       setAccountsStatus("success");
       record("Balances aggregated across accounts.");
 
-      try {
-        const partiesPayload = await apiRequest<any>(
-          "/open-finance/account-information/v1.2/parties",
-          {
-            method: "GET",
-            headers,
-          }
-        );
-        const partyName = extractPartyName(partiesPayload);
-        if (partyName) {
-          setAccountHolderName(partyName);
-        }
-      } catch (partyError) {
-        console.warn("[Widget] Failed to fetch party information", partyError);
-      }
-
       await fetchTransactionsForAccounts(cards, headers);
     } catch (error) {
       const message = (error as Error).message;
@@ -536,29 +566,30 @@ export default function DataSharingWizard() {
     switch (step) {
       case 0:
         return (
-          <section className="wizard-step">
-            <div className="stage-head">
-              <h2>Select your bank</h2>
-              <p>Tap a bank to continue the flow.</p>
+          <section className="journey-panel">
+            <div className="journey-panel-head">
+              <div>
+                <p className="journey-eyebrow">Step 1 · Choose your institution</p>
+                <h2>Select a bank to connect</h2>
+                <p>Select one of the supported sandboxes to start sharing data.</p>
+              </div>
             </div>
-            <div className="bank-grid">
+            <div className="journey-bank-grid">
               {bankOptions.map((bank) => (
                 <button
                   key={bank.id}
-                  className={clsx(
-                    "bank-card",
-                    selectedBank?.id === bank.id && "bank-card-active"
-                  )}
+                  className="journey-bank-card"
                   onClick={() => {
                     setSelectedBank(bank);
                     advanceTo(1);
                   }}
                 >
-                  <span className="bank-logo">{bank.logo}</span>
+                  <div className="journey-bank-icon">{bank.logo}</div>
                   <div>
-                    <strong>{bank.name}</strong>
-                    <p>{bank.subtitle}</p>
+                    <p className="journey-bank-name">{bank.name}</p>
+                    <span>{bank.subtitle}</span>
                   </div>
+                  <ChevronRight size={18} className="journey-bank-chevron" />
                 </button>
               ))}
             </div>
@@ -566,174 +597,263 @@ export default function DataSharingWizard() {
         );
       case 1:
         return (
-          <section className="wizard-step">
-            <div className="consent-review-grid">
-              <div className="consent-summary">
-                <h3>Connect your account(s)</h3>
+          <section className="journey-panel">
+            <div className="journey-panel-head">
+              <div>
+                <p className="journey-eyebrow">Step 2 · Review and confirm</p>
+                <h2>Share data with {selectedBank?.name ?? "your bank"}</h2>
                 <p>
-                  For you to use this service <strong>Raseed</strong> needs to
-                  access information from your accounts at{" "}
-                  <strong>{selectedBank?.name ?? "your bank"}</strong>.
+                  Raseed will request access to balances, beneficiaries, and transactions to build your experience.
                 </p>
-                <p className="consent-small">
-                  This is a demo environment. The data you share is used only to
-                  simulate functionality — nothing is kept longer than 24 hours.
+              </div>
+              <StatusBadge status={consentStatus} />
+            </div>
+            <div className="journey-consent-grid">
+              <article className="journey-consent-card">
+                <h3>Consent window</h3>
+                <p className="journey-helper">
+                  Data access begins immediately after authorization and expires automatically.
                 </p>
-                <div className="consent-dates">
+                <div className="journey-consent-dates">
                   <div>
-                    <span className="meta-label">Start date</span>
+                    <span className="meta-label">Valid from</span>
                     <strong>{consentStartDate.toLocaleDateString()}</strong>
                   </div>
                   <div>
-                    <span className="meta-label">End date</span>
+                    <span className="meta-label">Valid until</span>
                     <strong>{consentEndDate.toLocaleDateString()}</strong>
                   </div>
                 </div>
-              </div>
-              <div className="permission-highlight-grid">
-                {permissionHighlights.map((item) => (
-                  <article key={item.title} className="permission-highlight">
-                    <h4>{item.title}</h4>
-                    <p>{item.body}</p>
-                  </article>
-                ))}
-                <div className="permission-calendar">
-                  <span>We will access your data until {consentEndDate.toLocaleDateString()}.</span>
+                <ul className="journey-permission-list">
+                  {permissionGroups.map((group) => (
+                    <li key={group.id}>
+                      <strong>{group.label}</strong>
+                      <p>{group.description}</p>
+                    </li>
+                  ))}
+                </ul>
+              </article>
+              <article className="journey-consent-card">
+                <h3>Why we need this</h3>
+                <div className="permission-highlight-grid">
+                  {permissionHighlights.map((item) => (
+                    <article key={item.title} className="permission-highlight">
+                      <h4>{item.title}</h4>
+                      <p>{item.body}</p>
+                    </article>
+                  ))}
+                  <div className="permission-calendar">
+                    <span>Data access automatically ends on {consentEndDate.toLocaleDateString()}.</span>
+                  </div>
                 </div>
-              </div>
+              </article>
             </div>
-            <div className="consent-actions">
+            <div className="journey-panel-actions">
               <button
-                className="primary consent-primary"
+                className="journey-primary"
                 onClick={handleConfirmConsent}
                 disabled={consentStatus === "loading" || !selectedBank}
               >
                 Continue to authorize
               </button>
-              <div className="consent-suptext">
-                Continue to{" "}
-                <strong>{selectedBank?.name ?? "your bank"}</strong> to share
-                your account information under these terms.
-              </div>
-              <StatusBadge status={consentStatus} />
+              <p className="journey-helper">
+                We'll open {selectedBank?.name ?? "your bank"} in a new tab so you can complete the consent.
+              </p>
             </div>
           </section>
         );
       case 2:
         return (
-          <section className="wizard-step redirect-step">
-            <div className="redirect-overlay">
-              <div className="redirect-spinner" />
-              <p>
-                You'll be redirected to {selectedBank?.name || "your bank"}, don't close this window.
-              </p>
-            </div>
-            <div className="redirect-form auto-mode">
+          <section className="journey-panel journey-panel-center">
+            <div className="journey-wait-card">
+              <div className="journey-spinner" />
+              <p>Waiting for {selectedBank?.name ?? "your bank"} to finish authorization.</p>
               <StatusBadge status={tokenStatus === "idle" ? "loading" : tokenStatus} />
-              <p className="wizard-info">
-                Waiting for{" "}
-                <strong>{selectedBank?.name || "your bank"}</strong> to finish
-                authentication. We’ll automatically exchange the authorization code
-                once it appears.
-              </p>
-              {tokenStatus === "error" && (
-                <p className="wizard-info error">
-                  Something went wrong while exchanging the authorization code. Refresh the page to retry.
+              {tokenStatus === "error" ? (
+                <p className="journey-helper journey-helper-error">
+                  Something went wrong while exchanging the authorization code. Refresh to retry.
+                </p>
+              ) : (
+                <p className="journey-helper">
+                  Keep this tab open — we'll detect the authorization code automatically and continue.
                 </p>
               )}
             </div>
           </section>
         );
       case 3:
+        if (balances && dashboardAccounts.length > 0) {
+          return (
+            <AccountsDashboard
+              accounts={dashboardAccounts}
+              summary={balances}
+              transactionsByAccount={transactionsByAccount}
+              transactionsStatus={transactionsStatus}
+              transactionsError={transactionsError}
+              selectedAccountId={selectedAccountId}
+              onSelectAccount={setSelectedAccountId}
+              onSync={fetchAccounts}
+              accountHolderName={accountHolderName}
+              accountHolderAvatar={accountHolderAvatar}
+              onAction={handleDashboardAction}
+              isSyncing={accountsStatus === "loading"}
+              canSync={Boolean(derivedToken)}
+            />
+          );
+        }
         return (
-          <section className="wizard-step">
-            <div className="stage-head">
-              <h2>Accounts & balances</h2>
-              <p>Sync accounts and visualize balances across currencies.</p>
-            </div>
-            <div className="wizard-panel">
-              <div className="wizard-panel-head">
-                <div>
-                  <strong>Fetch balances</strong>
-                  <p>Uses the starter kit account information APIs.</p>
-                </div>
-                <StatusBadge status={accountsStatus} />
+          <section className="journey-panel">
+            <div className="journey-panel-head">
+              <div>
+                <p className="journey-eyebrow">Step 4 · Accounts & balances</p>
+                <h2>Sync your accounts</h2>
+                <p>We aggregate balances and transactions for every linked account.</p>
               </div>
+              <StatusBadge status={accountsStatus} />
+            </div>
+            <div className="journey-panel-actions">
               <button
-                className="primary"
+                className="journey-primary"
                 onClick={fetchAccounts}
                 disabled={accountsStatus === "loading" || !derivedToken}
               >
-                Sync accounts
+                {accountsStatus === "loading" ? "Syncing…" : "Sync accounts"}
               </button>
               {!derivedToken && (
-                <p className="wizard-info">Complete the authorization step to obtain an access token.</p>
+                <p className="journey-helper">Complete the authorization step to obtain an access token.</p>
               )}
               {accountsError && (
-                <p className="wizard-error">Error: {accountsError}</p>
+                <p className="journey-helper journey-helper-error">
+                  Error while fetching accounts: {accountsError}
+                </p>
               )}
             </div>
-            {balances && dashboardAccounts.length > 0 ? (
-              <AccountsDashboard
-                accounts={dashboardAccounts}
-                summary={balances}
-                transactionsByAccount={transactionsByAccount}
-                transactionsStatus={transactionsStatus}
-                transactionsError={transactionsError}
-                selectedAccountId={selectedAccountId}
-                onSelectAccount={setSelectedAccountId}
-                onSync={fetchAccounts}
-                accountHolderName={accountHolderName}
-                onAction={handleDashboardAction}
-              />
-            ) : balances ? (
-              <p className="wizard-info">
-                Accounts synced but there was no dashboard data to visualize.
-              </p>
-            ) : null}
           </section>
         );
       default:
         return null;
     }
-  })();;
+  })();
+
+  const customerName = accountHolderName ?? "Awaiting profile";
+  const customerAvatar = accountHolderAvatar ?? null;
+  const customerInitials = initialsFromName(customerName);
+  const institutionLabel = selectedBank?.name ?? "Select a bank to continue";
+  const profileStateLabel =
+    partyStatus === "success"
+      ? "Profile synced"
+      : partyStatus === "error"
+        ? "Profile unavailable"
+        : "Awaiting profile";
+
+  const getStepBadgeStatus = (index: number): StepStatus | null => {
+    if (index === 0) {
+      return selectedBank ? "success" : null;
+    }
+    if (index === 1) {
+      return consentStatus;
+    }
+    if (index === 2) {
+      return step >= 2 ? (tokenStatus === "idle" ? "loading" : tokenStatus) : null;
+    }
+    if (index === 3) {
+      return accountsStatus;
+    }
+    return null;
+  };
 
   return (
-    <div className="wizard-shell">
-      <div className="raseed-brand">
-        <span className="raseed-wordmark">Raseed</span>
-      </div>
-
-      <div className="wizard-body">{stepContent}</div>
-
-      <button
-        className="log-toggle"
-        onClick={() => setLogOpen((prev) => !prev)}
-        aria-expanded={logOpen}
-      >
-        Activity log
-      </button>
-      {logOpen && (
-        <section className="wizard-log-panel">
-          <div className="panel-head">
+    <div className="journey-root">
+      <div className="journey-shell">
+        <header className="journey-header">
+          <div>
+            <p className="journey-eyebrow">Raseed banking journey</p>
+            <h1>Banking access orchestration</h1>
+            <p>
+              Walk through the same flows your customers complete: pick a bank,
+              review consent, authorize, and explore aggregated insights.
+            </p>
+          </div>
+          <div className="journey-header-user">
+            <div className="journey-avatar">
+              {customerAvatar ? (
+                <img src={customerAvatar} alt={customerName} />
+              ) : (
+                customerInitials
+              )}
+            </div>
             <div>
-              <h3>Activity</h3>
-              <p>Raseed actions this session.</p>
+              <p className="journey-user-label">{profileStateLabel}</p>
+              <strong>{customerName}</strong>
+              <p className="journey-user-meta">{institutionLabel}</p>
             </div>
           </div>
-          {messages.length === 0 ? (
-            <p className="wizard-info">
-              Walk through the steps to see live activity updates.
-            </p>
-          ) : (
-            <ul className="log">
-              {messages.map((message) => (
-                <li key={message}>{message}</li>
-              ))}
-            </ul>
-          )}
-        </section>
-      )}
+        </header>
+
+        <div className="journey-main">
+          <aside className="journey-aside">
+            <ol className="journey-steps">
+              {wizardSteps.map((item, index) => {
+                const state =
+                  index < step ? "done" : index === step ? "current" : "upcoming";
+                const badge = getStepBadgeStatus(index);
+                return (
+                  <li
+                    key={item.id}
+                    className={clsx("journey-step", `journey-step-${state}`)}
+                  >
+                    <span className="journey-step-marker">{index + 1}</span>
+                    <div>
+                      <p className="journey-step-label">{item.label}</p>
+                      {badge && <StatusBadge status={badge} />}
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+            <button
+              className="journey-log-toggle"
+              onClick={() => setLogOpen((prev) => !prev)}
+              aria-expanded={logOpen}
+            >
+              {logOpen ? "Hide activity log" : "Show activity log"}
+            </button>
+            {logOpen && (
+              <section className="journey-log-panel">
+                <div className="journey-panel-head">
+                  <div>
+                    <h3>Activity</h3>
+                    <p>Raseed actions this session.</p>
+                  </div>
+                </div>
+                {messages.length === 0 ? (
+                  <p className="journey-helper">
+                    Walk through the steps to see live updates here.
+                  </p>
+                ) : (
+                  <ul className="journey-log">
+                    {messages.map((message) => (
+                      <li key={message}>{message}</li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            )}
+          </aside>
+
+          <main className="journey-stage">{stepContent}</main>
+        </div>
+
+        <footer className="journey-footer">
+          <div>
+            <strong>Need help?</strong>
+            <p>Use the starter-kit APIs exposed through this widget.</p>
+          </div>
+          <div>
+            <p>Powered by OpenFinance sandbox + Raseed widgets</p>
+          </div>
+        </footer>
+      </div>
     </div>
   );
 }
@@ -789,6 +909,52 @@ function extractPartyName(payload: any): string | null {
     primary?.PartyName ||
     null
   );
+}
+
+function extractPartyAvatar(payload: any): string | null {
+  const parties = payload?.Data?.Party ?? payload?.Data?.Parties;
+  if (!Array.isArray(parties) || !parties.length) return null;
+  const primary = parties[0];
+  const candidates = [
+    primary?.Photo,
+    primary?.Party?.Photo,
+    primary?.Person?.Photo,
+    primary?.ProfileImage,
+    primary?.Avatar,
+    primary?.Image,
+  ];
+  for (const candidate of candidates) {
+    const normalized = normalizeAvatarCandidate(candidate);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return null;
+}
+
+function normalizeAvatarCandidate(candidate: any): string | null {
+  if (!candidate) return null;
+  if (typeof candidate === "string") {
+    if (candidate.startsWith("data:") || /^https?:\/\//i.test(candidate)) {
+      return candidate;
+    }
+    return null;
+  }
+  if (typeof candidate === "object") {
+    if (typeof candidate.url === "string") return candidate.url;
+    if (typeof candidate.Url === "string") return candidate.Url;
+    if (typeof candidate.URL === "string") return candidate.URL;
+    if (typeof candidate.href === "string") return candidate.href;
+    const base64 = candidate.Base64 ?? candidate.Data ?? candidate.Content;
+    if (typeof base64 === "string" && base64.length) {
+      const mime =
+        candidate.MediaType ??
+        candidate.ContentType ??
+        "image/png";
+      return `data:${mime};base64,${base64}`;
+    }
+  }
+  return null;
 }
 
 function normalizeTransactions(
@@ -862,4 +1028,15 @@ function normalizeTransactions(
       const dateB = b.timestamp ? Date.parse(b.timestamp) : 0;
       return dateB - dateA;
     });
+}
+
+function initialsFromName(name: string) {
+  if (!name) return "PSU";
+  const trimmed = name.trim();
+  if (!trimmed) return "PSU";
+  const parts = trimmed.split(/\s+/);
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+  return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
 }

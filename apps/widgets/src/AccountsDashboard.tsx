@@ -27,6 +27,9 @@ type AccountsDashboardProps = {
   onSync: () => void;
   accountHolderName?: string | null;
   onAction?: (action: "pay" | "transfer" | "receive") => void;
+  accountHolderAvatar?: string | null;
+  isSyncing?: boolean;
+  canSync?: boolean;
 };
 
 const quickActions: { id: "pay" | "transfer" | "receive"; label: string }[] = [
@@ -63,6 +66,9 @@ export default function AccountsDashboard({
   onSync,
   accountHolderName,
   onAction,
+  accountHolderAvatar,
+  isSyncing = false,
+  canSync = true,
 }: AccountsDashboardProps) {
   const [obscureBalance, setObscureBalance] = useState(false);
   const [showAllTransactions, setShowAllTransactions] = useState(false);
@@ -91,7 +97,7 @@ export default function AccountsDashboard({
   }, [activeAccount, onSelectAccount, selectedAccountId]);
 
   if (!accounts.length || !activeAccount) {
-    return <p className="wizard-info">No accounts returned yet.</p>;
+    return <p className="journey-helper">No accounts returned yet.</p>;
   }
 
   const greetingName = accountHolderName?.split(" ")[0] ?? "there";
@@ -138,7 +144,14 @@ export default function AccountsDashboard({
         <section className="dashboard-card dashboard-card-accounts">
           <div className="dashboard-head">
             <div className="dashboard-avatar">
-              {initialsFor(accountHolderName ?? activeAccount.name)}
+              {accountHolderAvatar ? (
+                <img
+                  src={accountHolderAvatar}
+                  alt={accountHolderName ?? "Customer avatar"}
+                />
+              ) : (
+                initialsFor(accountHolderName ?? activeAccount.name)
+              )}
             </div>
             <div>
               <p className="dashboard-eyebrow">Welcome back</p>
@@ -150,6 +163,14 @@ export default function AccountsDashboard({
                 type="button"
                 onClick={() => onSync()}
                 aria-label="Refresh balances"
+                disabled={!canSync || isSyncing}
+                title={
+                  !canSync
+                    ? "Complete consent before syncing"
+                    : isSyncing
+                      ? "Sync in progress"
+                      : "Refresh balances"
+                }
               >
                 <RefreshCw size={16} />
               </button>
