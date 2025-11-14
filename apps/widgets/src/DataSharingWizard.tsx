@@ -735,124 +735,47 @@ export default function DataSharingWizard() {
     }
   })();
 
-  const customerName = accountHolderName ?? "Awaiting profile";
-  const customerAvatar = accountHolderAvatar ?? null;
-  const customerInitials = initialsFromName(customerName);
-  const institutionLabel = selectedBank?.name ?? "Select a bank to continue";
-  const profileStateLabel =
-    partyStatus === "success"
-      ? "Profile synced"
-      : partyStatus === "error"
-        ? "Profile unavailable"
-        : "Awaiting profile";
-
-  const getStepBadgeStatus = (index: number): StepStatus | null => {
-    if (index === 0) {
-      return selectedBank ? "success" : null;
-    }
-    if (index === 1) {
-      return consentStatus;
-    }
-    if (index === 2) {
-      return step >= 2 ? (tokenStatus === "idle" ? "loading" : tokenStatus) : null;
-    }
-    if (index === 3) {
-      return accountsStatus;
-    }
-    return null;
-  };
+  const punchline = "Seamless open finance orchestration.";
 
   return (
     <div className="journey-root">
       <div className="journey-shell">
         <header className="journey-header">
-          <div>
-            <p className="journey-eyebrow">Raseed banking journey</p>
-            <h1>Banking access orchestration</h1>
-            <p>
-              Walk through the same flows your customers complete: pick a bank,
-              review consent, authorize, and explore aggregated insights.
-            </p>
-          </div>
-          <div className="journey-header-user">
-            <div className="journey-avatar">
-              {customerAvatar ? (
-                <img src={customerAvatar} alt={customerName} />
-              ) : (
-                customerInitials
-              )}
-            </div>
-            <div>
-              <p className="journey-user-label">{profileStateLabel}</p>
-              <strong>{customerName}</strong>
-              <p className="journey-user-meta">{institutionLabel}</p>
-            </div>
-          </div>
+          <span className="journey-brand">Raseed</span>
+          <p className="journey-punchline">{punchline}</p>
         </header>
 
-        <div className="journey-main">
-          <aside className="journey-aside">
-            <ol className="journey-steps">
-              {wizardSteps.map((item, index) => {
-                const state =
-                  index < step ? "done" : index === step ? "current" : "upcoming";
-                const badge = getStepBadgeStatus(index);
-                return (
-                  <li
-                    key={item.id}
-                    className={clsx("journey-step", `journey-step-${state}`)}
-                  >
-                    <span className="journey-step-marker">{index + 1}</span>
-                    <div>
-                      <p className="journey-step-label">{item.label}</p>
-                      {badge && <StatusBadge status={badge} />}
-                    </div>
-                  </li>
-                );
-              })}
-            </ol>
-            <button
-              className="journey-log-toggle"
-              onClick={() => setLogOpen((prev) => !prev)}
-              aria-expanded={logOpen}
-            >
-              {logOpen ? "Hide activity log" : "Show activity log"}
-            </button>
-            {logOpen && (
-              <section className="journey-log-panel">
-                <div className="journey-panel-head">
-                  <div>
-                    <h3>Activity</h3>
-                    <p>Raseed actions this session.</p>
-                  </div>
+        <main className="journey-stage full">{stepContent}</main>
+        <div className="journey-log-wrapper">
+          <button
+            className="journey-log-toggle"
+            onClick={() => setLogOpen((prev) => !prev)}
+            aria-expanded={logOpen}
+          >
+            {logOpen ? "Hide activity log" : "Show activity log"}
+          </button>
+          {logOpen && (
+            <section className="journey-log-panel">
+              <div className="journey-panel-head">
+                <div>
+                  <h3>Activity</h3>
+                  <p>Raseed actions this session.</p>
                 </div>
-                {messages.length === 0 ? (
-                  <p className="journey-helper">
-                    Walk through the steps to see live updates here.
-                  </p>
-                ) : (
-                  <ul className="journey-log">
-                    {messages.map((message) => (
-                      <li key={message}>{message}</li>
-                    ))}
-                  </ul>
-                )}
-              </section>
-            )}
-          </aside>
-
-          <main className="journey-stage">{stepContent}</main>
+              </div>
+              {messages.length === 0 ? (
+                <p className="journey-helper">
+                  Walk through the steps to see live updates here.
+                </p>
+              ) : (
+                <ul className="journey-log">
+                  {messages.map((message) => (
+                    <li key={message}>{message}</li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          )}
         </div>
-
-        <footer className="journey-footer">
-          <div>
-            <strong>Need help?</strong>
-            <p>Use the starter-kit APIs exposed through this widget.</p>
-          </div>
-          <div>
-            <p>Powered by OpenFinance sandbox + Raseed widgets</p>
-          </div>
-        </footer>
       </div>
     </div>
   );
@@ -1028,15 +951,4 @@ function normalizeTransactions(
       const dateB = b.timestamp ? Date.parse(b.timestamp) : 0;
       return dateB - dateA;
     });
-}
-
-function initialsFromName(name: string) {
-  if (!name) return "PSU";
-  const trimmed = name.trim();
-  if (!trimmed) return "PSU";
-  const parts = trimmed.split(/\s+/);
-  if (parts.length === 1) {
-    return parts[0].slice(0, 2).toUpperCase();
-  }
-  return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
 }
