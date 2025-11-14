@@ -6,6 +6,12 @@ import {
   TokenResponse,
   BalanceSummary,
 } from "./lib/apiClient";
+import AccountsDashboard from "./AccountsDashboard";
+import {
+  DashboardAccount,
+  DashboardTransaction,
+  TransactionsMap,
+} from "./lib/dashboardTypes";
 
 type StepStatus = "idle" | "loading" | "success" | "error";
 
@@ -140,6 +146,12 @@ export default function DataSharingWizard() {
   const [accountsStatus, setAccountsStatus] = useState<StepStatus>("idle");
   const [balances, setBalances] = useState<BalanceSummary | null>(null);
   const [accountsError, setAccountsError] = useState<string | null>(null);
+  const [dashboardAccounts, setDashboardAccounts] = useState<DashboardAccount[]>([]);
+  const [transactionsByAccount, setTransactionsByAccount] = useState<TransactionsMap>({});
+  const [transactionsStatus, setTransactionsStatus] = useState<StepStatus>("idle");
+  const [transactionsError, setTransactionsError] = useState<string | null>(null);
+  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
+  const [accountHolderName, setAccountHolderName] = useState<string | null>(null);
   const { messages, record } = useMessages();
   const [logOpen, setLogOpen] = useState(false);
 
@@ -163,6 +175,21 @@ export default function DataSharingWizard() {
   const advanceTo = useCallback((target: number) => {
     setStep((prev) => Math.min(Math.max(target, prev), wizardSteps.length - 1));
   }, []);
+
+  useEffect(() => {
+    if (!dashboardAccounts.length) {
+      if (selectedAccountId !== null) {
+        setSelectedAccountId(null);
+      }
+      return;
+    }
+    const found = dashboardAccounts.some(
+      (account) => account.accountId === selectedAccountId
+    );
+    if (!found) {
+      setSelectedAccountId(dashboardAccounts[0]?.accountId ?? null);
+    }
+  }, [dashboardAccounts, selectedAccountId]);
 
   const handleCreateConsent = async () => {
     setConsentStatus("loading");
@@ -239,6 +266,69 @@ export default function DataSharingWizard() {
     [advanceTo, consentPayload?.code_verifier, record]
   );
 
+  const fetchTransactionsForAccounts = useCallback(
+    async (
+      accountList: DashboardAccount[],
+      headers: Record<string, string>
+    ) => {
+      if (!accountList.length) {
+        setTransactionsByAccount({});
+        setTransactionsStatus("success");
+        return;
+      }
+      setTransactionsStatus("loading");
+      setTransactionsError(null);
+      try {
+        const responses = await Promise.allSettled(
+          accountList.map(async (account) => {
+            const payload = await apiRequest<any>(
+              `/open-finance/account-information/v1.2/accounts/${account.accountId}/transactions`,
+              {
+                method: "GET",
+                headers,
+              }
+            );
+            const transactions = normalizeTransactions(
+              payload?.Data?.Transaction ?? [],
+              account
+            );
+            return {
+              accountId: account.accountId,
+              transactions,
+            };
+          })
+        );
+        const map: TransactionsMap = {};
+        const failed: string[] = [];
+        responses.forEach((result, index) => {
+          if (result.status === "fulfilled") {
+            map[result.value.accountId] = result.value.transactions;
+          } else {
+            failed.push(
+              accountList[index]?.name ?? accountList[index]?.accountId
+            );
+          }
+        });
+        setTransactionsByAccount(map);
+        if (failed.length) {
+          const message = `Transactions unavailable for ${failed.join(", ")}.`;
+          setTransactionsStatus("error");
+          setTransactionsError(message);
+          record(message);
+        } else {
+          setTransactionsStatus("success");
+          record("Transactions fetched for each account.");
+        }
+      } catch (error) {
+        const message = (error as Error).message;
+        setTransactionsStatus("error");
+        setTransactionsError(message);
+        record(`Transactions fetch failed: ${message}`);
+      }
+    },
+    [record]
+  );
+
   const fetchAccounts = async () => {
     if (!derivedToken) {
       setAccountsError("Missing access token. Complete the authorization step.");
@@ -246,6 +336,10 @@ export default function DataSharingWizard() {
       return;
     }
     setAccountsError(null);
+    setTransactionsError(null);
+    setTransactionsStatus("idle");
+    setDashboardAccounts([]);
+    setTransactionsByAccount({});
     setAccountsStatus("loading");
     try {
       const headers = {
@@ -265,7 +359,7 @@ export default function DataSharingWizard() {
       };
       const totals = new Map<string, number>();
 
-      const detailed = await Promise.all(
+      const combined = await Promise.all(
         accounts.map(async (account: any) => {
           const accountId = account?.AccountId ?? account?.account_id;
           if (!accountId) return null;
@@ -290,21 +384,55 @@ export default function DataSharingWizard() {
               });
             }
           });
-          return {
+          const displayBalance = pickDisplayBalance(rows);
+          const card: DashboardAccount = {
             accountId,
             name:
               account?.Nickname ||
               account?.Account?.Name ||
               account?.ProductName ||
               accountId,
-            balances: rows,
+            type:
+              account?.AccountType ||
+              account?.AccountSubType ||
+              account?.Account?.SchemeName ||
+              null,
+            productName: account?.ProductName || account?.Nickname || null,
+            currency:
+              displayBalance?.currency ||
+              account?.Currency ||
+              rows[0]?.currency ||
+              "AED",
+            availableBalance: displayBalance?.amount ?? rows[0]?.amount ?? 0,
+            availableBalanceType: displayBalance?.type ?? null,
+            accountNumber: maskAccountIdentifier(
+              account?.Account?.Identification ??
+                account?.Account?.SecondaryIdentification ??
+                account?.Servicer?.Identification ??
+                account?.MaskedIdentification
+            ),
+          };
+          return {
+            summaryEntry: {
+              accountId,
+              name: card.name,
+              balances: rows,
+            } as BalanceSummary["accounts"][number],
+            card,
           };
         })
       );
 
-      summary.accounts = detailed.filter(
-        (item): item is BalanceSummary["accounts"][number] => Boolean(item)
+      const prepared = combined.filter(
+        (
+          entry
+        ): entry is {
+          summaryEntry: BalanceSummary["accounts"][number];
+          card: DashboardAccount;
+        } => Boolean(entry)
       );
+
+      summary.accounts = prepared.map((entry) => entry.summaryEntry);
       summary.totals = Array.from(totals.entries()).map(
         ([currency, amount]) => ({
           currency,
@@ -312,14 +440,42 @@ export default function DataSharingWizard() {
         })
       );
       setBalances(summary);
+      const cards = prepared.map((entry) => entry.card);
+      setDashboardAccounts(cards);
       setAccountsStatus("success");
       record("Balances aggregated across accounts.");
+
+      try {
+        const partiesPayload = await apiRequest<any>(
+          "/open-finance/account-information/v1.2/parties",
+          {
+            method: "GET",
+            headers,
+          }
+        );
+        const partyName = extractPartyName(partiesPayload);
+        if (partyName) {
+          setAccountHolderName(partyName);
+        }
+      } catch (partyError) {
+        console.warn("[Widget] Failed to fetch party information", partyError);
+      }
+
+      await fetchTransactionsForAccounts(cards, headers);
     } catch (error) {
       const message = (error as Error).message;
       setAccountsStatus("error");
       setAccountsError(message);
+      setDashboardAccounts([]);
+      setTransactionsByAccount({});
+      setTransactionsStatus("idle");
+      setTransactionsError(null);
       record(`Balance aggregation failed: ${message}`);
     }
+  };
+
+  const handleDashboardAction = (action: "pay" | "transfer" | "receive") => {
+    record(`Dashboard quick action selected: ${action}`);
   };
 
   useEffect(() => {
@@ -517,18 +673,24 @@ export default function DataSharingWizard() {
                 <p className="wizard-error">Error: {accountsError}</p>
               )}
             </div>
-            {balances && (
-              <div className="accounts-grid">
-                <div className="currency-panel">
-                  <span className="meta-label">Per currency</span>
-                  <CurrencyBars summary={balances} />
-                </div>
-                <div className="accounts-panel">
-                  <span className="meta-label">Accounts</span>
-                  <AccountList summary={balances} />
-                </div>
-              </div>
-            )}
+            {balances && dashboardAccounts.length > 0 ? (
+              <AccountsDashboard
+                accounts={dashboardAccounts}
+                summary={balances}
+                transactionsByAccount={transactionsByAccount}
+                transactionsStatus={transactionsStatus}
+                transactionsError={transactionsError}
+                selectedAccountId={selectedAccountId}
+                onSelectAccount={setSelectedAccountId}
+                onSync={fetchAccounts}
+                accountHolderName={accountHolderName}
+                onAction={handleDashboardAction}
+              />
+            ) : balances ? (
+              <p className="wizard-info">
+                Accounts synced but there was no dashboard data to visualize.
+              </p>
+            ) : null}
           </section>
         );
       default:
@@ -597,50 +759,107 @@ function StatusBadge({ status }: { status: StepStatus }) {
   );
 }
 
-function CurrencyBars({ summary }: { summary: BalanceSummary }) {
-  if (!summary.totals.length) {
-    return <p className="wizard-info">No balances returned yet.</p>;
-  }
-  const max = Math.max(
-    ...summary.totals.map((item) => Math.abs(item.amount)),
-    1
+function pickDisplayBalance(
+  balances: BalanceSummary["accounts"][number]["balances"]
+) {
+  if (!balances.length) return null;
+  const available = balances.find((entry) =>
+    /available/i.test(entry.type ?? "")
   );
+  return available ?? balances[0];
+}
+
+function maskAccountIdentifier(value?: string | null) {
+  if (!value) return null;
+  const trimmed = String(value).replace(/[^A-Za-z0-9]/g, "");
+  if (trimmed.length <= 4) {
+    return trimmed;
+  }
+  return `•••• ${trimmed.slice(-4)}`;
+}
+
+function extractPartyName(payload: any): string | null {
+  const parties = payload?.Data?.Party ?? payload?.Data?.Parties;
+  if (!Array.isArray(parties) || !parties.length) return null;
+  const primary = parties[0];
   return (
-    <ul className="currency-bars">
-      {summary.totals.map((item) => (
-        <li key={item.currency}>
-          <div className="currency-bars-head">
-            <strong>{item.currency}</strong>
-            <span>{item.amount.toFixed(2)}</span>
-          </div>
-          <div className="currency-bar-track">
-            <div
-              className="currency-bar-fill"
-              style={{ width: `${(Math.abs(item.amount) / max) * 100}%` }}
-            />
-          </div>
-        </li>
-      ))}
-    </ul>
+    primary?.Name ||
+    primary?.FullName ||
+    primary?.Party?.Name ||
+    primary?.PartyName ||
+    null
   );
 }
 
-function AccountList({ summary }: { summary: BalanceSummary }) {
-  if (!summary.accounts.length) {
-    return <p className="wizard-info">No accounts returned yet.</p>;
-  }
-  return (
-    <ul className="account-list wizard-account-list">
-      {summary.accounts.map((account) => (
-        <li key={account.accountId}>
-          <p className="account-name">{account.name}</p>
-          {account.balances.map((entry, index) => (
-            <p className="account-balance" key={index}>
-              {entry.type}: {entry.amount.toFixed(2)} {entry.currency}
-            </p>
-          ))}
-        </li>
-      ))}
-    </ul>
-  );
+function normalizeTransactions(
+  entries: any[],
+  account: DashboardAccount
+): DashboardTransaction[] {
+  return entries
+    .map((entry, index) => {
+      const rawAmount =
+        entry?.Amount?.Amount ??
+        entry?.TransactionAmount?.Amount ??
+        entry?.TransactionAmount ??
+        entry?.Amount;
+      const amount = Number(rawAmount);
+      if (!Number.isFinite(amount)) {
+        return null;
+      }
+      const indicator = (entry?.CreditDebitIndicator ?? "")
+        .toString()
+        .toLowerCase();
+      const direction = indicator === "credit" ? "credit" : "debit";
+      const currency =
+        entry?.Amount?.Currency ??
+        entry?.TransactionAmount?.Currency ??
+        account.currency;
+      const timestamp =
+        entry?.BookingDateTime ||
+        entry?.ValueDateTime ||
+        entry?.TransactionDateTime ||
+        entry?.CreationDateTime ||
+        null;
+      const description =
+        entry?.MerchantDetails?.MerchantName ||
+        entry?.TransactionInformation ||
+        entry?.ProprietaryBankTransactionCode?.Code ||
+        entry?.BankTransactionCode?.Code ||
+        (direction === "credit" ? "Incoming payment" : "Payment");
+      const category =
+        entry?.MerchantDetails?.MerchantCategoryCode ||
+        entry?.BankTransactionCode?.SubCode ||
+        entry?.ProprietaryBankTransactionCode?.SubCode ||
+        entry?.StatementReference?.[0] ||
+        entry?.TransactionInformation ||
+        null;
+      const merchant =
+        entry?.MerchantDetails?.MerchantName ||
+        entry?.CreditorAccount?.Name ||
+        entry?.DebtorAccount?.Name ||
+        null;
+      const id =
+        entry?.TransactionId ||
+        entry?.TransactionReference ||
+        `${account.accountId}-${index}`;
+      return {
+        id: String(id),
+        accountId: account.accountId,
+        description,
+        category,
+        amount,
+        currency,
+        direction,
+        timestamp,
+        merchant,
+      };
+    })
+    .filter(
+      (entry): entry is DashboardTransaction => Boolean(entry && entry.amount)
+    )
+    .sort((a, b) => {
+      const dateA = a.timestamp ? Date.parse(a.timestamp) : 0;
+      const dateB = b.timestamp ? Date.parse(b.timestamp) : 0;
+      return dateB - dateA;
+    });
 }
