@@ -101,29 +101,6 @@ const permissionGroups = [
 
 const defaultPermissionGroups = permissionGroups.map((group) => group.id);
 
-const permissionHighlights = [
-  {
-    title: "Your account details",
-    body:
-      "We need account names, currencies, and identifiers so the experience can tailor insights to you.",
-  },
-  {
-    title: "Regular payments",
-    body:
-      "Scheduled payments, direct debits, and standing orders help us flag upcoming commitments.",
-  },
-  {
-    title: "Account activity",
-    body:
-      "Transactions, beneficiaries, and balances ensure categorization and spending analysis stay accurate.",
-  },
-  {
-    title: "Contact & party info",
-    body:
-      "Basic party information is used to personalize the Raseed experience inside ChatGPT.",
-  },
-];
-
 function useMessages() {
   const [messages, setMessages] = useState<string[]>([]);
   const record = (message: string) => {
@@ -608,45 +585,31 @@ export default function DataSharingWizard() {
               </div>
               <StatusBadge status={consentStatus} />
             </div>
-            <div className="journey-consent-grid">
-              <article className="journey-consent-card">
-                <h3>Consent window</h3>
-                <p className="journey-helper">
-                  Data access begins immediately after authorization and expires automatically.
-                </p>
-                <div className="journey-consent-dates">
-                  <div>
-                    <span className="meta-label">Valid from</span>
-                    <strong>{consentStartDate.toLocaleDateString()}</strong>
-                  </div>
-                  <div>
-                    <span className="meta-label">Valid until</span>
-                    <strong>{consentEndDate.toLocaleDateString()}</strong>
-                  </div>
+            <div className="journey-consent-brief">
+              <div className="journey-consent-window">
+                <div>
+                  <span className="meta-label">Valid from</span>
+                  <strong>{consentStartDate.toLocaleDateString()}</strong>
                 </div>
-                <ul className="journey-permission-list">
+                <div>
+                  <span className="meta-label">Valid until</span>
+                  <strong>{consentEndDate.toLocaleDateString()}</strong>
+                </div>
+                <p className="journey-helper">
+                  Data access begins once you authorize and ends automatically on the date above.
+                </p>
+              </div>
+              <div className="journey-consent-summary">
+                <strong>What we’ll access</strong>
+                <ul>
                   {permissionGroups.map((group) => (
-                    <li key={group.id}>
-                      <strong>{group.label}</strong>
-                      <p>{group.description}</p>
-                    </li>
+                    <li key={group.id}>{group.label}</li>
                   ))}
                 </ul>
-              </article>
-              <article className="journey-consent-card">
-                <h3>Why we need this</h3>
-                <div className="permission-highlight-grid">
-                  {permissionHighlights.map((item) => (
-                    <article key={item.title} className="permission-highlight">
-                      <h4>{item.title}</h4>
-                      <p>{item.body}</p>
-                    </article>
-                  ))}
-                  <div className="permission-calendar">
-                    <span>Data access automatically ends on {consentEndDate.toLocaleDateString()}.</span>
-                  </div>
-                </div>
-              </article>
+                <p className="journey-helper">
+                  We only request the scopes required to power balances, accounts, and transaction insights.
+                </p>
+              </div>
             </div>
             <div className="journey-panel-actions">
               <button
