@@ -22,3 +22,14 @@ export type DashboardTransaction = {
 };
 
 export type TransactionsMap = Record<string, DashboardTransaction[]>;
+
+export type AutoDashboardPayload = {
+  consentId: string;
+  balances: import("./apiClient").BalanceSummary;
+  dashboardAccounts: DashboardAccount[];
+  transactionsByAccount: TransactionsMap;
+  party?: {
+    name?: string | null;
+    avatar?: string | null;
+  } | null;
+};

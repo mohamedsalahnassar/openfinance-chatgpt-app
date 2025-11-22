@@ -99,6 +99,53 @@ const withSupabase = supabase
 
 export const isConsentStoreEnabled = Boolean(supabase);
 
+export const fetchLatestAuthorizedConsent = async () => {
+  if (!supabase) {
+    return null;
+  }
+  try {
+    const { data, error } = await supabase
+      .from(SUPABASE_CONSENTS_TABLE)
+      .select(
+        "consent_id, auth_code, code_verifier, status, callback_received_at, updated_at, metadata"
+      )
+      .not("auth_code", "is", null)
+      .order("callback_received_at", { ascending: false, nullsFirst: false })
+      .order("updated_at", { ascending: false, nullsFirst: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      throw error;
+    }
+    return data;
+  } catch (error) {
+    logError("[consent-store] Failed to fetch latest authorized consent", {
+      message: error.message,
+    });
+    throw error;
+  }
+};
+
+export const updateConsentMetadata = async (consentId, metadata) => {
+  if (!supabase || !consentId) {
+    return;
+  }
+  try {
+    const { error } = await supabase
+      .from(SUPABASE_CONSENTS_TABLE)
+      .update(dropUndefined({ metadata: safeJson(metadata), updated_at: nowIso() }))
+      .eq("consent_id", consentId);
+    if (error) {
+      throw error;
+    }
+  } catch (error) {
+    logError("[consent-store] Failed to update consent metadata", {
+      consentId,
+      message: error.message,
+    });
+  }
+};
+
 export const recordConsentCreation = async ({
   consentId,
   consentType,

@@ -8,6 +8,7 @@ import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { CallToolRequestSchema, ListResourceTemplatesRequestSchema, ListResourcesRequestSchema, ListToolsRequestSchema, ReadResourceRequestSchema, } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { OpenFinanceClient, } from "./openfinanceClient.js";
+import { fetchLatestAuthorizedConsent, isMcpConsentStoreEnabled, updateConsentMetadata, } from "./consentStore.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..", "..", "..");
 const assetsRoot = path.resolve(projectRoot, "assets/openfinance-consent-flow");
@@ -92,6 +93,15 @@ const dataWizardWidget = {
     invoked: "Data wizard ready",
     html: buildWidgetHtml("data-wizard"), // Fallback for static contexts
 };
+const dashboardWidget = {
+    id: "openfinance-dashboard",
+    title: "Auto dashboard",
+    description: "Shows aggregated accounts, balances, and recent transactions using the latest active consent automatically.",
+    templateUri: `ui://widget/openfinance/dashboard?rev=${widgetAssets.revision}`,
+    invoking: "Loading auto dashboard",
+    invoked: "Auto dashboard ready",
+    html: buildWidgetHtml("dashboard-only"),
+};
 const paymentWidget = {
     id: "openfinance-payment-wizard",
     title: "Open Finance Payment",
@@ -101,7 +111,7 @@ const paymentWidget = {
     invoked: "Payment wizard ready",
     html: buildWidgetHtml("payment"), // Fallback for static contexts
 };
-const widgets = [consentWidget, dataWizardWidget, paymentWidget];
+const widgets = [consentWidget, dataWizardWidget, dashboardWidget, paymentWidget];
 const widgetsByUri = new Map(widgets.map((widget) => [widget.templateUri, widget]));
 function widgetDescriptorMeta(widget) {
     return {
@@ -197,6 +207,18 @@ const aggregateSchema = z.object({
         .min(10, "Provide a valid access token")
         .describe("Access token returned by the authorization-code exchange"),
 });
+const activeConsentAnalysisSchema = z.object({
+    maxTransactionsPerAccount: z
+        .number({
+        required_error: "maxTransactionsPerAccount must be a number.",
+        invalid_type_error: "maxTransactionsPerAccount must be a number.",
+    })
+        .int()
+        .min(1)
+        .max(100)
+        .default(20)
+        .describe("Maximum number of transactions to include per account."),
+});
 const widgetSchema = z.object({
     scope: z.string().optional(),
     maxPaymentAmount: z.string().optional(),
@@ -220,6 +242,47 @@ function asToolResult(message, payload) {
         ],
         structuredContent: payload,
     };
+}
+function coerceMetadata(metadata) {
+    if (!metadata || Array.isArray(metadata)) {
+        return {};
+    }
+    return { ...metadata };
+}
+function coerceTokenCache(metadata) {
+    const raw = metadata?.["token_cache"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+        return null;
+    }
+    const cache = raw;
+    return {
+        access_token: cache.access_token,
+        refresh_token: cache.refresh_token,
+        expires_at: cache.expires_at,
+        obtained_at: cache.obtained_at,
+    };
+}
+function usableAccessToken(cache) {
+    if (!cache?.access_token || !cache?.expires_at) {
+        return null;
+    }
+    const expiryMs = Date.parse(cache.expires_at);
+    if (!Number.isFinite(expiryMs)) {
+        return null;
+    }
+    const safetyWindowMs = 60_000;
+    if (expiryMs - safetyWindowMs <= Date.now()) {
+        return null;
+    }
+    return cache.access_token;
+}
+function computeExpiryTimestamp(expiresIn) {
+    const seconds = Number(expiresIn);
+    if (!Number.isFinite(seconds) || seconds <= 0) {
+        return null;
+    }
+    const expiresAt = new Date(Date.now() + seconds * 1000);
+    return expiresAt.toISOString();
 }
 const toolDefinitions = new Map();
 function registerTool(definition) {
@@ -274,6 +337,132 @@ const tools = [
             structuredContent: {},
             _meta: widgetInvocationMeta(paymentWidget),
         }),
+    }),
+    registerTool({
+        spec: {
+            name: "openfinance.launchDashboard",
+            title: "Launch auto dashboard",
+            description: "Opens the dashboard-only experience to display accounts, balances, and recent transactions using the most recent authorized consent.",
+            inputSchema: {
+                type: "object",
+                properties: {},
+                additionalProperties: false,
+            },
+            _meta: widgetDescriptorMeta(dashboardWidget),
+        },
+        schema: z.object({}).passthrough(),
+        invoke: async () => ({
+            content: [
+                {
+                    type: "text",
+                    text: "Auto dashboard ready. Showing accounts, balances, and transactions from your last active consent.",
+                },
+            ],
+            structuredContent: {},
+            _meta: widgetInvocationMeta(dashboardWidget),
+        }),
+    }),
+    registerTool({
+        spec: {
+            name: "openfinance.fetchActiveConsentData",
+            title: "Fetch balances and transactions from latest consent",
+            description: "Use this action to fetch up-to-date account balances and recent transactions: it finds the latest authorized consent, exchanges it for an access token, and returns the aggregated balances alongside per-account transaction lists.",
+            inputSchema: {
+                type: "object",
+                properties: {
+                    maxTransactionsPerAccount: {
+                        type: "number",
+                        description: "Maximum number of transactions to return per account (default 20).",
+                        minimum: 1,
+                        maximum: 100,
+                    },
+                },
+                additionalProperties: false,
+            },
+        },
+        schema: activeConsentAnalysisSchema,
+        invoke: async (rawArgs) => {
+            const { maxTransactionsPerAccount } = rawArgs;
+            if (!isMcpConsentStoreEnabled) {
+                throw new Error("Supabase consent store is not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY to enable this tool.");
+            }
+            const consent = await fetchLatestAuthorizedConsent();
+            if (!consent) {
+                throw new Error("No authorized consent could be found in the Supabase store.");
+            }
+            if (!consent.auth_code || !consent.code_verifier) {
+                throw new Error(`Consent ${consent.consent_id} is missing an authorization code or PKCE verifier.`);
+            }
+            const metadata = coerceMetadata(consent.metadata);
+            const tokenCache = coerceTokenCache(metadata);
+            const cachedToken = usableAccessToken(tokenCache);
+            let accessToken = cachedToken;
+            let refreshToken = tokenCache?.refresh_token ?? null;
+            let updatedMetadata = metadata;
+            const persistCache = async (cache) => {
+                updatedMetadata = {
+                    ...metadata,
+                    token_cache: cache,
+                };
+                await updateConsentMetadata(consent.consent_id, updatedMetadata);
+            };
+            if (!accessToken) {
+                if (refreshToken) {
+                    const refreshPayload = await openFinanceClient.refreshAccessToken(refreshToken);
+                    accessToken = refreshPayload?.["access_token"] ?? null;
+                    refreshToken = refreshPayload?.["refresh_token"] ?? refreshToken;
+                    if (!accessToken) {
+                        throw new Error(`Refresh token for consent ${consent.consent_id} did not return an access token.`);
+                    }
+                    await persistCache({
+                        access_token: accessToken,
+                        refresh_token: refreshToken ?? undefined,
+                        expires_at: computeExpiryTimestamp(refreshPayload?.["expires_in"]) ?? undefined,
+                        obtained_at: new Date().toISOString(),
+                    });
+                }
+                else {
+                    const tokenPayload = await openFinanceClient.exchangeAuthorizationCode(consent.auth_code, consent.code_verifier);
+                    accessToken = tokenPayload?.["access_token"] ?? null;
+                    refreshToken = tokenPayload?.["refresh_token"] ?? null;
+                    if (!accessToken) {
+                        throw new Error(`Authorization code exchange for consent ${consent.consent_id} did not return an access token.`);
+                    }
+                    await persistCache({
+                        access_token: accessToken,
+                        refresh_token: refreshToken ?? undefined,
+                        expires_at: computeExpiryTimestamp(tokenPayload?.["expires_in"]) ?? undefined,
+                        obtained_at: new Date().toISOString(),
+                    });
+                }
+            }
+            if (!accessToken) {
+                throw new Error("Unable to retrieve a usable access token for the active consent.");
+            }
+            const balanceSummary = await openFinanceClient.aggregateBalances(accessToken);
+            const transactions = await Promise.all(balanceSummary.accounts.map(async (account) => {
+                const lines = await openFinanceClient.fetchTransactionsForAccount(accessToken, account.accountId);
+                return {
+                    accountId: account.accountId,
+                    name: account.name,
+                    transactions: lines.slice(0, maxTransactionsPerAccount),
+                };
+            }));
+            const structuredResponse = {
+                consentId: consent.consent_id,
+                status: consent.status,
+                updatedAt: consent.updated_at ?? consent.callback_received_at ?? null,
+                metadata: updatedMetadata ?? null,
+                balances: balanceSummary,
+                transactions,
+            };
+            const message = [
+                `Fetched balances for consent ${consent.consent_id ?? "unknown"}.`,
+                describeSummary(balanceSummary),
+                `Included up to ${maxTransactionsPerAccount} transaction(s) per account.`,
+            ].join(" ");
+            return asToolResult(message, structuredResponse);
+        },
     }),
 ];
 function createMcpServer() {

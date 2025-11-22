@@ -26,6 +26,15 @@ export type BalanceSummary = {
   accounts: AccountBalances[];
 };
 
+export type TransactionEntry = {
+  transactionId: string;
+  amount: number;
+  currency: string;
+  creditDebitIndicator: string;
+  description?: string | null;
+  bookingDateTime?: string | null;
+};
+
 const amountRegex = /^(?:0|[1-9]\d*)(?:\.\d{2})$/;
 
 export class OpenFinanceClient {
@@ -177,6 +186,16 @@ export class OpenFinanceClient {
     });
   }
 
+  async refreshAccessToken(refreshToken: string): Promise<JsonRecord> {
+    if (!refreshToken || typeof refreshToken !== "string") {
+      throw new Error("refreshToken is required to refresh access.");
+    }
+    return this.request<JsonRecord>("/token/refresh-token", {
+      method: "POST",
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+  }
+
   async aggregateBalances(accessToken: string): Promise<BalanceSummary> {
     const authHeaders = {
       Authorization: `Bearer ${accessToken}`,
@@ -249,5 +268,66 @@ export class OpenFinanceClient {
       })),
       accounts: accountSummaries,
     };
+  }
+
+  async fetchTransactionsForAccount(
+    accessToken: string,
+    accountId: string
+  ): Promise<TransactionEntry[]> {
+    if (!accountId) {
+      return [];
+    }
+    const authHeaders = {
+      Authorization: `Bearer ${accessToken}`,
+    };
+    const payload = await this.request<any>(
+      `/open-finance/account-information/v1.2/accounts/${accountId}/transactions`,
+      {
+        method: "GET",
+        headers: authHeaders,
+      }
+    );
+    const lines: any[] = payload?.Data?.Transaction ?? [];
+    return lines
+      .map((line, index) => {
+        const rawAmount =
+          line?.Amount?.Amount ??
+          line?.TransactionAmount?.Amount ??
+          line?.MonetaryAmount ??
+          null;
+        const amount = Number(rawAmount);
+        if (!Number.isFinite(amount)) {
+          return null;
+        }
+        const currency =
+          line?.Amount?.Currency ??
+          line?.TransactionAmount?.Currency ??
+          "AED";
+        const transactionId =
+          line?.TransactionId ??
+          line?.TransactionReference ??
+          line?.PaymentId ??
+          `${accountId}-${index}`;
+        return {
+          transactionId: String(transactionId),
+          amount,
+          currency,
+          creditDebitIndicator: line?.CreditDebitIndicator ?? "Unknown",
+          description:
+            line?.TransactionInformation ??
+            line?.MerchantDetails?.MerchantName ??
+            line?.BankTransactionCode?.Code ??
+            line?.ProprietaryBankTransactionCode?.Code ??
+            null,
+          bookingDateTime:
+            line?.BookingDateTime ??
+            line?.ValueDateTime ??
+            line?.TransactionDateTime ??
+            null,
+        } as TransactionEntry;
+      })
+      .filter(
+        (entry): entry is TransactionEntry => entry !== null
+      );
   }
 }

@@ -119,6 +119,15 @@ export class OpenFinanceClient {
             body: JSON.stringify({ code, code_verifier: codeVerifier }),
         });
     }
+    async refreshAccessToken(refreshToken) {
+        if (!refreshToken || typeof refreshToken !== "string") {
+            throw new Error("refreshToken is required to refresh access.");
+        }
+        return this.request("/token/refresh-token", {
+            method: "POST",
+            body: JSON.stringify({ refresh_token: refreshToken }),
+        });
+    }
     async aggregateBalances(accessToken) {
         const authHeaders = {
             Authorization: `Bearer ${accessToken}`,
@@ -176,5 +185,52 @@ export class OpenFinanceClient {
             })),
             accounts: accountSummaries,
         };
+    }
+    async fetchTransactionsForAccount(accessToken, accountId) {
+        if (!accountId) {
+            return [];
+        }
+        const authHeaders = {
+            Authorization: `Bearer ${accessToken}`,
+        };
+        const payload = await this.request(`/open-finance/account-information/v1.2/accounts/${accountId}/transactions`, {
+            method: "GET",
+            headers: authHeaders,
+        });
+        const lines = payload?.Data?.Transaction ?? [];
+        return lines
+            .map((line, index) => {
+            const rawAmount = line?.Amount?.Amount ??
+                line?.TransactionAmount?.Amount ??
+                line?.MonetaryAmount ??
+                null;
+            const amount = Number(rawAmount);
+            if (!Number.isFinite(amount)) {
+                return null;
+            }
+            const currency = line?.Amount?.Currency ??
+                line?.TransactionAmount?.Currency ??
+                "AED";
+            const transactionId = line?.TransactionId ??
+                line?.TransactionReference ??
+                line?.PaymentId ??
+                `${accountId}-${index}`;
+            return {
+                transactionId: String(transactionId),
+                amount,
+                currency,
+                creditDebitIndicator: line?.CreditDebitIndicator ?? "Unknown",
+                description: line?.TransactionInformation ??
+                    line?.MerchantDetails?.MerchantName ??
+                    line?.BankTransactionCode?.Code ??
+                    line?.ProprietaryBankTransactionCode?.Code ??
+                    null,
+                bookingDateTime: line?.BookingDateTime ??
+                    line?.ValueDateTime ??
+                    line?.TransactionDateTime ??
+                    null,
+            };
+        })
+            .filter((entry) => entry !== null);
     }
 }

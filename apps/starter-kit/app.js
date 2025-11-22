@@ -31,6 +31,7 @@ import productsAndLeads from './api/routes/productsAndLeads.js'
 import confirmationOfPayee from './api/routes/confirmationOfPayee.js'
 import authDebug from './api/routes/authDebug.js'
 import consents from './api/routes/consents.js'
+import dashboardAuto from './api/routes/dashboardAuto.js'
 
 
 
@@ -117,6 +118,7 @@ app.use('/open-finance/product/v1.2', productsAndLeads);
 app.use('/open-finance/confirmation-of-payee/v1.2', confirmationOfPayee);
 app.use('', authDebug);
 app.use('/consents', consents);
+app.use('', dashboardAuto);
 
 // Swagger UI
 const file = fs.readFileSync("./api/swagger.yaml", "utf8");
